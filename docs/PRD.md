@@ -138,7 +138,7 @@ Rekomendasinya Laravel + MySQL untuk Hub dan .NET 10 (C#) untuk Agent. Hub memak
 | Credential agent | Windows DPAPI (machine scope) | Device token terenkripsi oleh OS dan tidak bisa dibaca dari PC lain | File plaintext (kondisi saat ini) |
 | Observability | Sentry (error), Laravel Pulse (performa), log JSON terstruktur | Cukup untuk tim kecil. OpenTelemetry bisa ditambahkan kemudian | Stack Grafana penuh |
 | Deployment | Docker Compose atau container di cloud yang ada; GitHub Actions untuk CI | Selaras dengan `docker-compose.yml` yang sudah ada di opsifin-main | Kubernetes: berlebihan untuk skala ini |
-| Installer agent | MSI (WiX) dengan Authenticode signing | Instalasi diam lewat GPO/RMM dan tidak diblokir SmartScreen | Inno Setup |
+| Installer agent | MSI (WiX) + signature release internal Opsigo | OTA tetap terautorisasi tanpa biaya certificate publik; instalasi pertama dapat menampilkan SmartScreen | Inno Setup |
 
 **Kenapa tidak lebih sederhana:** sistem tanpa agent tidak mungkin, karena printer berada di LAN lokasi dan tidak bisa dijangkau dari cloud.
 
@@ -176,7 +176,7 @@ Satu database bersama dipakai, dan setiap tabel bisnis punya kolom `tenant_id` y
 - Semua perubahan konfigurasi masuk `audit_logs`: siapa, kapan, nilai lama dan baru, dengan secret disamarkan.
 - Rate limit per agent (60 req/menit) dan per user.
 - Agent hanya membuka koneksi keluar (HTTPS 443). Tidak ada port masuk di PC lokasi.
-- Update agent hanya diterima bila biner bertanda tangan (Authenticode) dan checksum-nya cocok dengan manifest dari Hub.
+- Update agent hanya diterima bila checksum cocok dan manifest memiliki signature internal Opsigo yang valid. Authenticode publik ditunda; bridge `0.3.12` tetap menerima Authenticode development untuk migrasi satu kali.
 
 ## Kebutuhan fungsional
 
@@ -453,7 +453,7 @@ Target dirancang untuk asumsi 50 tenant, 300 agent, dan 1.000 printer. Angka ini
 | Observability | NFR-09 | Metrik: kedalaman antrean per printer, umur job tertua, rasio gagal, agent offline, latensi callback | Tampil di Pulse/Grafana + alert |
 | Keamanan | NFR-10 | Isolasi tenant diuji otomatis di CI | Test lintas tenant di setiap endpoint |
 | Keamanan | NFR-11 | Secret tidak pernah muncul di log, UI, atau audit | Disamarkan di semua tempat |
-| Keamanan | NFR-12 | TLS 1.2+ untuk semua koneksi; biner agent bertanda tangan | Wajib |
+| Keamanan | NFR-12 | TLS 1.2+ untuk semua koneksi; paket OTA memiliki signature release internal Opsigo | Wajib |
 | Agent | NFR-13 | Jejak di PC lokasi | RAM < 60 MB idle, CPU < 1% idle, satu service, satu folder |
 | Agent | NFR-14 | Kompatibilitas OS | Windows 10/11 dan Windows Server 2016+ (x64) |
 | Maintainability | NFR-15 | Cakupan test pada domain inti (state machine, klaim, dedupe, adapter) | ≥ 80% baris; test kontrak untuk API agent |
@@ -526,7 +526,7 @@ Kedua repo menyimpan `docs/PRD.md` (ekspor dokumen ini) dan `CLAUDE.md` yang mer
 
 **Checklist Fase 0** (urut berdasarkan lama tunggu, yang paling lama dimulai duluan)
 
-- [ ] Mulai pengadaan sertifikat code signing OV/EV (S9), minggu pertama
+- [x] Tetapkan signature release internal Opsigo sebagai jalur tanpa biaya; Authenticode publik ditunda sampai skala distribusi membutuhkannya
 - [ ] Jawab pertanyaan terbuka: jumlah tenant/printer, Hub di cloud atau on-premise, akses `Link` PDF
 - [ ] Kumpulkan `Link` PDF semua tenant dan uji dari jaringan calon Hub (S5)
 - [ ] Survei IT klien: hak admin, proxy, antivirus, cara instal massal (S10)
@@ -564,7 +564,7 @@ DoD berlaku di tiga tingkat: setiap item kerja (story/PR), setiap modul fitur, d
 | Callback | Callback idempoten (kirim dua kali, efeknya sama); kegagalan opsifin-main di-retry dengan backoff dan terlihat di detail job; `Failed` terkirim untuk kegagalan permanen |
 | Dashboard & laporan | Angka dashboard cocok dengan query langsung ke DB (rekonsiliasi harian di staging); filter bisa dibagikan via URL |
 | Notifikasi | Setiap jenis alert dipicu di staging dan diterima di kanal yang diatur; ada dedup/throttle (maksimal 1 alert sama per 15 menit) |
-| Update agent | Rollout canary 10% lalu 100% berhasil; rollback ke versi sebelumnya berhasil; biner tanpa tanda tangan ditolak |
+| Update agent | Rollout canary 10% lalu 100% berhasil; rollback ke versi sebelumnya berhasil; paket tanpa signature release Opsigo yang valid ditolak |
 
 ### DoD rilis
 
@@ -602,7 +602,7 @@ Risiko terbesar adalah cetak ganda atau terlewat selama masa transisi, saat agen
 | Spooler "selesai" belum tentu berarti kertas keluar | `printed` palsu saat printer macet setelah menerima data | Status printer dipantau 60 detik setelah spooled; error di jendela itu ditandai `printed_unverified` dan muncul di dashboard. Keterbatasan ini didokumentasikan |
 | Hub crash setelah `getData` menandai `Process`, sebelum job tersimpan | Invoice tersangkut | `getData` tetap mengembalikan baris `Process`, jadi pull berikutnya mengambilnya lagi; dedupe mencegah duplikat |
 | PC lokasi mati atau tidak ada di lokasi | Antrean menumpuk diam-diam | Alert agent offline > 3 menit + job tertua > 10 menit; printer cadangan (FR-21) di v2 |
-| SmartScreen/antivirus memblokir agent | Instalasi gagal | Sertifikat code signing (EV direkomendasikan); daftar hash untuk whitelisting IT customer |
+| SmartScreen/antivirus memblokir agent | Instalasi pertama perlu konfirmasi atau whitelist | Panduan `More info → Run anyway`, publikasi SHA-256, dan whitelist hash oleh IT customer; Authenticode publik dapat ditambahkan saat skala membenarkan biayanya |
 | Kebocoran data antar tenant | Insiden keamanan serius | Global scope + test arsitektur + static analysis + test lintas tenant, semuanya wajib lulus di CI |
 | Lisensi SumatraPDF (GPLv3) | Risiko hukum bila salah dibundel | Didistribusikan sebagai executable terpisah tanpa modifikasi, dengan teks lisensi. Opsi PDFium (BSD) bila legal keberatan |
 | Tim belum familiar dengan C#/.NET | Kecepatan pengembangan agent | Cakupan agent kecil (\~3 rb baris); template proyek + reviewer .NET berpengalaman |

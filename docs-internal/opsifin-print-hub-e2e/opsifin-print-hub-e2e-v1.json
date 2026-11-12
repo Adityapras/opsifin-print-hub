@@ -1,0 +1,732 @@
+{
+  "slug": "opsifin-print-hub-e2e-v1",
+  "title": "Opsifin Print Hub — End-to-End Technical Map",
+  "eyebrow": "Arsitektur &middot; Audit kode &middot; Runbook &middot; 10 November 2026",
+  "lead": "Peta teknis yang menjelaskan bagaimana satu invoice bergerak dari <code>opsifin-main</code> ke Hub, Agent Windows, spooler, lalu kembali sebagai callback. Dokumen ini sekaligus membedakan perilaku yang sudah berjalan, kontrol keselamatan yang wajib dipertahankan, dan gap yang perlu ditutup sebelum pilot multi-tenant.",
+  "footer": "Opsifin Print Hub &middot; End-to-End Technical Map &middot; Audit working tree 10 November 2026",
+  "notice": {
+    "title": "Ruang lingkup dan cara membaca",
+    "html": "Dokumen dibuat dari working tree Hub saat ini, PRD, kontrak Agent v1, skema MySQL lokal, data lokal, dan pemeriksaan sekunder repo Agent <code>0.3.11</code>. Lingkungan lokal yang diperiksa memiliki 28 tabel, 187 print job, 989 event, 87 snapshot dokumen, 202 callback terkirim, dan tidak memiliki trigger database. QA2, production, jaringan tiap tenant, serta seluruh model printer fisik belum diaudit. Kartu berlabel <strong>Runbook</strong> menjelaskan alur yang sudah ada; kartu berlabel <strong>Perbaikan</strong> adalah pekerjaan yang belum boleh dianggap selesai. Tautan bukti menunjuk tepat ke file dan baris working tree Hub."
+  },
+  "target": {
+    "title": "Tujuan dokumen",
+    "items": [
+      "Memberi satu gambaran end-to-end yang bisa dibaca developer, support, dan operator tanpa harus menelusuri seluruh source code.",
+      "Menunjukkan batas tanggung jawab: <strong>opsifin-main menentukan dokumen</strong>, <strong>Hub mengatur trust/routing/state</strong>, dan <strong>Agent melakukan pekerjaan fisik</strong>.",
+      "Menjadikan tenant, Integration Identity, Source Connection, binding, dan claim sebagai rantai kepercayaan yang tidak boleh dilompati.",
+      "Menutup risiko cetak ganda dan kebocoran lintas tenant sebelum pilot, tanpa mengubah aplikasi menjadi microservices atau menambah komponen yang belum dibutuhkan.",
+      "Menyediakan matriks QA yang dapat dipakai sebagai gate onboarding tenant dan gate rilis Agent/Hub."
+    ]
+  },
+  "flow": [
+    {
+      "href": "#trust",
+      "title": "1 &middot; Trust",
+      "text": "Tenant, identity, source, site, Agent, printer, binding"
+    },
+    {
+      "href": "#intake",
+      "title": "2 &middot; Intake",
+      "text": "Scheduler, getData, dedupe, PDF snapshot"
+    },
+    {
+      "href": "#dispatch",
+      "title": "3 &middot; Dispatch",
+      "text": "Queue, claim, lease, signed download"
+    },
+    {
+      "href": "#physical",
+      "title": "4 &middot; Print",
+      "text": "PDFium, GDI, spooler JobId, durable events"
+    },
+    {
+      "href": "#completion",
+      "title": "5 &middot; Complete",
+      "text": "Terminal state, callback, retry, reconciliation"
+    },
+    {
+      "href": "#e2e",
+      "title": "6 &middot; QA",
+      "text": "Chaos, tenant isolation, physical evidence"
+    }
+  ],
+  "current": {
+    "tag": "AS-IS",
+    "title": "Kondisi implementasi saat audit",
+    "count": "85 test / 514 assertions terakhir &middot; 1 tenant lokal &middot; Agent 0.3.11",
+    "desc": "Pipeline utama sudah berjalan sampai printer fisik dan callback. Redis/Horizon aktif untuk background PDF refetch dan OTA; source pull serta callback MVP masih berjalan langsung di scheduler.",
+    "boxes": [
+      {
+        "title": "Control plane & trust",
+        "items": [
+          "Hub bersifat internal-only; tenant adalah master parent seluruh resource.",
+          "Integration ID Hub harus sama dengan respons <code>/identity</code> opsifin-main.",
+          "Connection yang berubah atau gagal verifikasi menjadi inactive; binding terkait ikut dinonaktifkan.",
+          "Agent token membawa tenant secara implisit dan request selalu memasang <code>TenantContext</code>."
+        ]
+      },
+      {
+        "title": "Pipeline dokumen",
+        "items": [
+          "Pull <code>/getData</code> &rarr; dedupe &rarr; validasi PDF &rarr; snapshot SHA-256 &rarr; <code>queued</code>.",
+          "Agent claim setiap 5 detik, lease 120 detik, signed URL 5 menit, satu job aktif per printer.",
+          "Agent mengirim event idempoten dari SQLite outbox; Hub menyimpan timeline append-only.",
+          "Terminal state membuat callback outbox dengan retry 30s / 120s / 600s / 1800s / 3600s."
+        ]
+      },
+      {
+        "title": "Data lokal saat audit",
+        "items": [
+          "Print job: 77 failed, 10 printed, 100 skipped.",
+          "Callback: 202 sent; 5 refetch request berstatus succeeded.",
+          "Tersimpan 87 dokumen dan 989 event; belum ada job retensi terjadwal.",
+          "Seluruh tabel bisnis inti memiliki <code>tenant_id</code> dan index komposit yang relevan."
+        ]
+      },
+      {
+        "title": "Batas bukti",
+        "items": [
+          "Working tree memuat banyak perubahan belum di-commit; audit merekam kondisi aktual, bukan hanya commit terakhir.",
+          "Repo Agent diperiksa untuk recovery spool journal dan outbox, tetapi tautan artifact difokuskan ke repo Hub.",
+          "QA2/production, TLS, backup-restore, load test, dan variasi driver printer belum diverifikasi.",
+          "Tidak ada trigger MySQL lokal; aturan domain berada di aplikasi dan constraint database."
+        ]
+      }
+    ]
+  },
+  "audit": {
+    "desc": "Temuan tinggi menyentuh risiko cetak ganda atau batas keamanan. Temuan menengah menyentuh skalabilitas, expiry, retensi, dan kemampuan diagnosis. Semua temuan dipetakan ke task penangan.",
+    "findings": [
+      {
+        "id": "AUD-01",
+        "sev": "hi",
+        "text": "Lease expired untuk state claimed dan printing diproses sama: attempt ditutup lalu job langsung kembali queued. Ini tidak konsisten dengan guard print_error setelah spooled yang sengaja menghentikan retry otomatis karena kertas mungkin sudah keluar.",
+        "ev": [
+          "/app/Domain/Jobs/Repositories/ExpiredJobLeaseRepository.php:14",
+          "/app/Domain/Jobs/Repositories/ExpiredJobLeaseRepository.php:65",
+          "/app/Domain/Jobs/Repositories/JobEventRepository.php:152",
+          "/tests/Feature/Agent/V1/JobPipelineTest.php:165"
+        ],
+        "fix": [
+          "JOB-02",
+          "QA-01"
+        ]
+      },
+      {
+        "id": "AUD-02",
+        "sev": "hi",
+        "text": "Ketika hasil fisik ambigu (misalnya kertas keluar tetapi GetJob probe gagal), UI hanya menyediakan Retry printing dan Refetch and retry. Belum ada jalur operator untuk mengonfirmasi hasil fisik tanpa mencetak lagi, sehingga tindakan pemulihan dapat menggandakan invoice.",
+        "ev": [
+          "/app/Filament/Resources/PrintJobs/PrintJobResource.php:229",
+          "/app/Filament/Resources/PrintJobs/PrintJobResource.php:250",
+          "/app/Domain/Jobs/Services/ManualJobRetryService.php:199",
+          "/tests/Feature/Agent/V1/JobPipelineTest.php:251"
+        ],
+        "fix": [
+          "FIN-02",
+          "QA-01"
+        ]
+      },
+      {
+        "id": "AUD-03",
+        "sev": "hi",
+        "text": "Link PDF dari payload source boleh menunjuk ke URL HTTP(S) mana pun. Validasi saat ini hanya memeriksa format dan skema URL, sehingga source yang salah atau terkompromi dapat membuat Hub melakukan request ke host internal yang tidak disetujui.",
+        "ev": [
+          "/app/Domain/Sources/Services/LegacyOpsifinClient.php:38",
+          "/app/Domain/Sources/Services/LegacyOpsifinClient.php:107",
+          "/app/Domain/Sources/Services/SourceDocumentFetcher.php:20"
+        ],
+        "fix": [
+          "SRC-03",
+          "QA-01"
+        ]
+      },
+      {
+        "id": "AUD-04",
+        "sev": "md",
+        "text": "Semua binding source diproses serial dalam satu command global yang memakai withoutOverlapping. Belum ada jitter atau batas dua request paralel per tenant seperti target PRD; satu source lambat dapat menahan tenant lain dan membuat last pull tertinggal.",
+        "ev": [
+          "/app/Console/Commands/PullSourcesCommand.php:41",
+          "/routes/console.php:11",
+          "/docs/PRD-ringkasan-keputusan.md:169"
+        ],
+        "fix": [
+          "SRC-02",
+          "OPS-01"
+        ]
+      },
+      {
+        "id": "AUD-05",
+        "sev": "md",
+        "text": "Callback hanya dipilih ketika Source Connection aktif dan verified. expires_at baru dievaluasi setelah percobaan gagal, jadi callback pada source inactive dapat tetap pending melewati 24 jam dan bahkan terkirim terlambat saat source diaktifkan kembali.",
+        "ev": [
+          "/app/Domain/Delivery/Repositories/CallbackOutboxRepository.php:36",
+          "/app/Domain/Delivery/Repositories/CallbackOutboxRepository.php:89",
+          "/config/print_hub.php:10"
+        ],
+        "fix": [
+          "FIN-03",
+          "OPS-01"
+        ]
+      },
+      {
+        "id": "AUD-06",
+        "sev": "md",
+        "text": "Schema menyediakan documents.expires_at dan PRD menetapkan retensi default 90 hari, tetapi snapshot dibuat tanpa expiry dan tidak ada scheduler purge. Disk lokal akan tumbuh tanpa batas dan data invoice tersimpan lebih lama dari kebijakan yang dijanjikan.",
+        "ev": [
+          "/database/migrations/2026_11_02_000000_create_source_and_delivery_tables.php:55",
+          "/app/Domain/Sources/Services/SourcePullService.php:114",
+          "/routes/console.php:11",
+          "/docs/PRD.md:437"
+        ],
+        "fix": [
+          "REC-02",
+          "QA-01"
+        ]
+      },
+      {
+        "id": "AUD-07",
+        "sev": "md",
+        "text": "Exception per item saat pull hanya menambah counter failed dan dibuang tanpa kode, invoice key, atau event. Operator hanya melihat jumlah item gagal, sehingga payload malformed atau kegagalan storage sulit ditelusuri dan dapat berulang tanpa bukti yang cukup.",
+        "ev": [
+          "/app/Domain/Sources/Services/SourcePullService.php:54",
+          "/app/Domain/Sources/Services/SourcePullService.php:77",
+          "/app/Domain/Sources/Repositories/SourcePullRepository.php:9"
+        ],
+        "fix": [
+          "REC-03",
+          "OPS-01"
+        ]
+      }
+    ]
+  },
+  "sections": [
+    {
+      "id": "trust",
+      "tag": "TRUST",
+      "color": "slate",
+      "navLabel": "Trust & onboarding",
+      "title": "Fondasi trust: tenant sampai printer binding",
+      "desc": "Seluruh routing dimulai dari tenant master. Tidak ada job yang boleh masuk bila identitas source, Agent, printer, dan binding belum membentuk rantai yang konsisten.",
+      "mapFocus": "Tenant identity, source verification, Site/Agent/printer, binding, cutover aman",
+      "tasks": [
+        {
+          "id": "TRU-01",
+          "title": "[Runbook] Buat tenant dan verifikasi Integration Identity",
+          "deps": "Endpoint /identity tersedia di opsifin-main tenant",
+          "desc": "Hub membuat integration_id permanen; opsifin-main harus mengembalikan UUID yang sama sebelum connection dapat diaktifkan.",
+          "todo": [
+            "Buat tenant dari master Tenants dan simpan code, nama, serta timezone yang benar.",
+            "Salin Integration ID Hub ke konfigurasi opsifin-main tenant yang sesuai.",
+            "Buat Source Connection dalam keadaan inactive; isi Base URL dan credential REST.",
+            "Jalankan Verify identity dan pastikan respons tepat berbentuk {integration_id: UUID Hub}.",
+            "Aktifkan connection hanya setelah status Verified; perubahan URL/credential wajib verifikasi ulang."
+          ],
+          "files": [
+            "/app/Domain/Sources/Services/SourceConnectionTestService.php",
+            "/app/Domain/Sources/Models/SourceConnection.php",
+            "/app/Domain/Tenancy/Models/Tenant.php",
+            "/tests/Feature/Sources/SourceConnectionTestServiceTest.php"
+          ]
+        },
+        {
+          "id": "TRU-02",
+          "title": "[Runbook] Pair Site dan Agent, lalu validasi availability printer",
+          "deps": "TRU-01",
+          "desc": "Pairing code menempelkan satu machine_id ke tenant dan site. Heartbeat menjadi sumber inventaris; availability efektif mengikuti umur heartbeat Agent, bukan hanya status printer terakhir.",
+          "todo": [
+            "Buat Site fisik yang benar sebelum menghasilkan pairing code.",
+            "Enroll Agent dengan pairing code sekali pakai; simpan hanya hash device secret di Hub.",
+            "Pastikan hostname, machine_id, versi, dan daftar Windows printer muncul dari heartbeat.",
+            "Aktifkan hanya printer yang benar-benar menjadi destination produksi; printer virtual tetap inactive kecuali untuk QA.",
+            "Verifikasi status Online <90 detik, Stale 90–180 detik, dan Offline >180 detik."
+          ],
+          "files": [
+            "/routes/api.php",
+            "/app/Http/Middleware/AuthenticateAgent.php",
+            "/app/Domain/Fleet/Repositories/HeartbeatRepository.php",
+            "/app/Domain/Fleet/Models/Agent.php",
+            "/app/Domain/Fleet/Models/Printer.php"
+          ]
+        },
+        {
+          "id": "TRU-03",
+          "title": "[Runbook] Buat binding dan lakukan cutover tanpa dua sumber cetak",
+          "deps": "TRU-01, TRU-02",
+          "desc": "Binding menghubungkan identitas printer legacy di opsifin-main ke satu destination printer Hub. Source connection dan printer dipindahkan sebagai satu pasangan saat retry.",
+          "todo": [
+            "Pilih Source Connection tenant yang Verified dan destination printer tenant yang sama.",
+            "Isi Source PrinterName, Identifier, dan Printer Version sesuai konfigurasi opsifin-main.",
+            "Simpan binding inactive dan pastikan sinkronisasi /printerName berhasil.",
+            "Matikan autoprint lama untuk kombinasi yang sama agar tidak ada dua consumer getData.",
+            "Aktifkan binding, lalu cek next pull dan remote config Agent sebelum mengirim invoice uji."
+          ],
+          "files": [
+            "/app/Domain/Sources/Services/PrinterBindingService.php",
+            "/app/Domain/Sources/Models/PrinterBinding.php",
+            "/app/Domain/Sources/Services/AgentSourceIntervalResolver.php",
+            "/tests/Feature/Sources/PrinterBindingSyncTest.php"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "intake",
+      "tag": "SOURCE",
+      "color": "blue",
+      "navLabel": "Intake & snapshot",
+      "title": "Intake: getData, dedupe, validasi, snapshot",
+      "desc": "Hub menjadi satu-satunya pihak yang berbicara dengan opsifin-main. Agent tidak pernah menerima credential source atau mengunduh Link asli.",
+      "mapFocus": "Scheduler, active hours, pull, dedupe, PDF normalization, SHA-256, source isolation",
+      "tasks": [
+        {
+          "id": "SRC-01",
+          "title": "[Runbook] Ikuti satu invoice dari getData sampai queued",
+          "deps": "TRU-03",
+          "desc": "Alur intake mempertahankan bukti sumber dan membuat snapshot immutable yang kelak divalidasi lagi oleh Agent.",
+          "todo": [
+            "Scheduler memilih binding active, due, connection Verified, tenant active, dan berada dalam active hours.",
+            "POST /getData membawa VersionAPI, PrinterName, PrinterVersion, dan Identifier binding.",
+            "Dedupe memakai tenant + InvNo + ItemType + VersionInv; item yang sudah ada hanya menulis duplicate_ignored.",
+            "IsHardCopyInv=N menjadi skipped dan langsung membuat callback Success tanpa mengunduh PDF.",
+            "Link diunduh, noise BOM/whitespace aman dinormalisasi, PDF dibuka, page count/size/SHA-256 dihitung, lalu snapshot disimpan di tenants/{tenant_id}/documents.",
+            "Job menerima event received lalu queued; kegagalan PDF menjadi failed + callback Failed."
+          ],
+          "files": [
+            "/app/Console/Commands/PullSourcesCommand.php",
+            "/app/Domain/Sources/Services/SourcePullService.php",
+            "/app/Domain/Sources/Services/SourceDocumentFetcher.php",
+            "/app/Domain/Jobs/Repositories/JobIntakeRepository.php"
+          ]
+        },
+        {
+          "id": "SRC-02",
+          "title": "[Perbaikan] Isolasi pull per tenant melalui Horizon + jitter",
+          "deps": "Keputusan D5",
+          "desc": "Hilangkan head-of-line blocking tanpa membuat microservice baru: scheduler hanya mendispatch job kecil, Horizon memproses binding dengan throttle per tenant.",
+          "todo": [
+            "Buat queued job SourcePull yang membawa binding_id saja; set TenantContext di dalam handle dan selalu clear pada finally.",
+            "Gunakan unique lock per binding agar satu binding tidak dipull ganda ketika scheduler dan retry bertemu.",
+            "Batasi maksimal dua request aktif per tenant dan tambahkan jitter ke next_pull_at agar burst tidak serempak.",
+            "Catat duration, outcome, jumlah item, dan source error tanpa credential/payload sensitif.",
+            "Pertahankan command sinkron --binding sebagai alat diagnosis manual, tetapi scheduler produksi hanya dispatch.",
+            "Uji tenant lambat/timeout tidak menahan tenant lain serta tidak menggandakan intake."
+          ],
+          "files": [
+            "/app/Console/Commands/PullSourcesCommand.php",
+            "/routes/console.php",
+            "/app/Providers/HorizonServiceProvider.php",
+            "+/app/Domain/Sources/Jobs/PullSourceBinding.php",
+            "+/tests/Feature/Sources/QueuedSourcePullTest.php"
+          ]
+        },
+        {
+          "id": "SRC-03",
+          "title": "[Perbaikan] Terapkan kebijakan host Link PDF yang eksplisit",
+          "deps": "Keputusan D3",
+          "desc": "Menutup SSRF tanpa mematahkan tenant yang Link PDF-nya memang memakai host internal atau CDN berbeda dari Base URL.",
+          "todo": [
+            "Tambahkan allowed_document_hosts pada Source Connection; default hanya host Base URL.",
+            "Resolve DNS lalu tolak loopback, link-local, metadata cloud, multicast, dan host/IP lain kecuali disetujui eksplisit.",
+            "Validasi ulang setiap redirect; jangan mengirim Basic Auth source ke host dokumen.",
+            "Simpan hanya URL yang sudah lolos policy dan tampilkan diagnosis aman DOCUMENT_HOST_NOT_ALLOWED.",
+            "Tambahkan test hostname sama, CDN yang di-allowlist, redirect terlarang, IPv4/IPv6 private, dan DNS rebinding best-effort."
+          ],
+          "files": [
+            "/app/Domain/Sources/Services/LegacyOpsifinClient.php",
+            "/app/Domain/Sources/Services/SourceDocumentFetcher.php",
+            "/app/Domain/Sources/Models/SourceConnection.php",
+            "+/database/migrations/2026_11_11_000000_add_document_host_policy.php",
+            "+/tests/Feature/Sources/DocumentHostPolicyTest.php"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dispatch",
+      "tag": "DISPATCH",
+      "color": "orange",
+      "navLabel": "Claim & lease",
+      "title": "Dispatch: antrean per printer, claim, lease, signed download",
+      "desc": "Hub memberi paling banyak satu job aktif per printer. Row lock dan lease mencegah dua Agent menerima job yang sama, sementara signed URL menjaga snapshot tetap tenant-scoped.",
+      "mapFocus": "Oldest first, SKIP LOCKED, attempt, lease, signed URL, hash verification",
+      "tasks": [
+        {
+          "id": "JOB-01",
+          "title": "[Runbook] Claim job dan unduh snapshot secara aman",
+          "deps": "SRC-01",
+          "desc": "Claim hanya menerima printer milik Agent terautentikasi dan binding/source yang masih eligible.",
+          "todo": [
+            "Agent mengirim printer_ids yang terlihat dan aktif; Hub mengabaikan printer tenant atau Agent lain.",
+            "Untuk tiap printer, Hub menolak claim baru bila ada state claimed/printing yang masih aktif.",
+            "Job queued tertua dikunci dengan FOR UPDATE SKIP LOCKED lalu dipindah ke claimed dalam transaksi.",
+            "Attempt baru dibuat, attempt_count naik, lease_agent_id dan lease_until 120 detik disimpan.",
+            "Respons berisi signed document URL 5 menit, SHA-256, page count, size, dan print settings.",
+            "Agent mengunduh snapshot Hub dan wajib menolak hash mismatch sebelum menyentuh spooler."
+          ],
+          "files": [
+            "/app/Domain/Jobs/Repositories/JobClaimRepository.php",
+            "/app/Domain/Jobs/Services/JobClaimService.php",
+            "/app/Http/Controllers/Agent/V1/DownloadDocumentController.php",
+            "/tests/Feature/Agent/V1/JobPipelineTest.php"
+          ]
+        },
+        {
+          "id": "JOB-02",
+          "title": "[Perbaikan] Bedakan lease expired sebelum dan sesudah spooled",
+          "deps": "Keputusan D1",
+          "desc": "Lease yang hilang sebelum spool aman diulang; lease yang hilang setelah spool harus dianggap ambigu dan tidak boleh otomatis mencetak ulang.",
+          "todo": [
+            "Untuk state claimed tanpa spooled_at: tutup attempt sebagai lease_expired dan kembalikan queued seperti sekarang.",
+            "Untuk state printing atau attempt memiliki spooler_job_id/spooled_at: hentikan auto-requeue dan pindahkan ke failed dengan failure_code PRINT_RESULT_UNKNOWN atau state review khusus sesuai D1.",
+            "Simpan event yang membedakan released_before_spool dan result_unknown_after_spool, termasuk Agent dan spooler JobId.",
+            "Pastikan event outbox Agent lama tidak dapat mengubah run baru setelah lease berpindah.",
+            "Tambah test dua jalur lease, restart Agent, Hub down, outbox terlambat, dan tidak ada claim kedua setelah spooled tanpa keputusan operator."
+          ],
+          "files": [
+            "/app/Domain/Jobs/Repositories/ExpiredJobLeaseRepository.php",
+            "/app/Domain/Jobs/Repositories/JobEventRepository.php",
+            "/app/Domain/Jobs/Enums/PrintJobState.php",
+            "+/tests/Feature/Agent/V1/ExpiredPrintingLeaseTest.php"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "physical",
+      "tag": "PRINT",
+      "color": "purple",
+      "navLabel": "Physical print",
+      "title": "Physical print: PDFium, GDI, spooler, event outbox",
+      "desc": "Tahap fisik berada di Agent Windows. Hub hanya menerima bukti event dan tidak menganggap HTTP submit sebagai bukti kertas sudah keluar.",
+      "mapFocus": "Download verification, PDFium/GDI, spooler JobId, 60s verification, local journal/outbox",
+      "tasks": [
+        {
+          "id": "PRT-01",
+          "title": "[Runbook] Pantau pekerjaan fisik sampai hasil dapat dipercaya",
+          "deps": "JOB-01",
+          "desc": "Agent menyimpan jejak lokal sebelum mengirim event agar restart atau jaringan putus tidak memaksa PDF yang sama masuk spooler dua kali.",
+          "todo": [
+            "Agent validasi size dan SHA-256 snapshot, lalu merender PDF dengan PDFium ke GDI menggunakan print settings dari Hub.",
+            "Setelah StartDoc/EndDoc menghasilkan spooler JobId, Agent menyimpan active print journal secara atomik sebelum mengirim spooled.",
+            "Agent memantau JobId spesifik, bukan hanya nama dokumen atau job pertama di antrean.",
+            "Event spooled, spooler_status, completed/printed_unverified/print_error masuk SQLite outbox dan dikirim idempoten.",
+            "Jika service restart dan job yang sama diklaim lagi, Agent resume monitor dari journal, bukan submit PDF ulang.",
+            "Hub memperpanjang lease pada event yang sah dan menolak event attempt/Agent yang sudah kehilangan lease."
+          ],
+          "files": [
+            "/contracts/agent-v1.yaml",
+            "/app/Domain/Jobs/Repositories/JobEventRepository.php",
+            "/app/Http/Controllers/Agent/V1/JobEventsController.php",
+            "/tests/Feature/Agent/V1/JobPipelineTest.php"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "completion",
+      "tag": "RESULT",
+      "color": "green",
+      "navLabel": "Result & recovery",
+      "title": "Completion, callback, retry, dan rekonsiliasi",
+      "desc": "Terminal state Hub dan status di opsifin-main harus dapat dijelaskan per print run. Retry tidak menghapus bukti run sebelumnya.",
+      "mapFocus": "Printed/failed/skipped, callback outbox, run_number, retry/refetch, physical reconciliation",
+      "tasks": [
+        {
+          "id": "FIN-01",
+          "title": "[Runbook] Bentuk terminal state dan callback per print run",
+          "deps": "PRT-01",
+          "desc": "Completed/printed_unverified menjadi printed; error permanen, attempt habis, atau error setelah spool menjadi failed. Setiap run memiliki callback sendiri.",
+          "todo": [
+            "Hub menerima event secara idempoten berdasarkan event_id dan mengunci job selama transisi.",
+            "Completed/printed_unverified mengisi printed_at, menutup attempt, dan melepas lease.",
+            "Print error sebelum spool boleh retry otomatis 30s/120s/600s sampai tiga attempt; setelah spool tidak auto-retry.",
+            "Printed dan skipped membuat payload Success; failed membuat payload Failed sesuai Printer Version dan VersionInv.",
+            "Callback outbox dikirim dengan Basic Auth source, mencatat status HTTP/response terbatas, dan menulis callback_succeeded/failed.",
+            "Modal Activity menampilkan snapshot, source URL, attempt, timeline scroll, callback, reason, dan perubahan destination binding."
+          ],
+          "files": [
+            "/app/Domain/Jobs/Repositories/JobEventRepository.php",
+            "/app/Domain/Delivery/Services/CallbackOutboxService.php",
+            "/app/Domain/Delivery/Repositories/CallbackOutboxRepository.php",
+            "/app/Filament/Resources/PrintJobs/PrintJobResource.php",
+            "/resources/views/filament/infolists/print-job-timeline.blade.php"
+          ]
+        },
+        {
+          "id": "FIN-02",
+          "title": "[Perbaikan] Tambah resolusi operator untuk hasil cetak ambigu",
+          "deps": "JOB-02, Keputusan D2",
+          "desc": "Operator harus bisa memilih antara mengonfirmasi kertas sudah tercetak atau mencetak ulang, dengan guard dan audit yang berbeda.",
+          "todo": [
+            "Tampilkan action Resolve print result hanya untuk failure_code ambigu dan attempt yang memiliki spooler_job_id/spooled_at.",
+            "Pilihan Confirm physically printed membutuhkan konfirmasi eksplisit, reason, actor, timestamp, dan opsional catatan pemeriksaan printer.",
+            "Resolusi mengubah job menjadi printed tanpa membuat attempt cetak baru, lalu membuat callback Success untuk run yang sama jika belum terkirim.",
+            "Pilihan Retry printing tetap membuat run baru dan menampilkan peringatan besar bahwa invoice mungkin tercetak dua kali.",
+            "Tolak resolusi lintas tenant, job non-ambigu, run yang sudah dilaporkan Success, atau user tanpa role operator/admin.",
+            "Tambahkan event print_result_confirmed dan audit sebelum/sesudah; bukti lama tidak boleh dihapus."
+          ],
+          "files": [
+            "/app/Filament/Resources/PrintJobs/PrintJobResource.php",
+            "/app/Domain/Jobs/Repositories/ManualJobRetryRepository.php",
+            "/app/Domain/Delivery/Services/CallbackOutboxService.php",
+            "+/app/Domain/Jobs/Services/AmbiguousPrintResolutionService.php",
+            "+/tests/Feature/Jobs/AmbiguousPrintResolutionTest.php"
+          ]
+        },
+        {
+          "id": "FIN-03",
+          "title": "[Perbaikan] Tegakkan callback expiry dan manual recovery",
+          "deps": "Keputusan D6",
+          "desc": "Expiry 24 jam harus menjadi state nyata, bukan hanya kondisi yang diperiksa ketika request gagal.",
+          "todo": [
+            "Sebelum memilih due callback, tandai pending dengan expires_at <= now sebagai failed/expired walaupun source inactive.",
+            "Jangan mengirim callback yang sudah expired setelah connection diaktifkan kembali tanpa aksi manual.",
+            "Sediakan action Retry callback dengan reason dan audit untuk kasus source sudah pulih.",
+            "Tambahkan dashboard counter/alert untuk pending mendekati expiry dan expired callback.",
+            "Uji source inactive >24h, identity mismatch, HTTP timeout, recovery, duplicate dispatch, dan callback run yang superseded."
+          ],
+          "files": [
+            "/app/Domain/Delivery/Repositories/CallbackOutboxRepository.php",
+            "/app/Console/Commands/ProcessCallbacksCommand.php",
+            "/app/Filament/Resources/CallbackOutboxes/CallbackOutboxResource.php",
+            "+/app/Console/Commands/ExpireCallbacksCommand.php",
+            "+/tests/Feature/Delivery/CallbackExpiryTest.php"
+          ]
+        },
+        {
+          "id": "REC-01",
+          "title": "[Runbook] Pilih Retry printing atau Refetch and retry dengan benar",
+          "deps": "FIN-01",
+          "desc": "Dua mode retry mempertahankan job dan histori; perbedaannya hanya sumber snapshot untuk run berikutnya.",
+          "todo": [
+            "Gunakan Retry printing untuk printer offline, spooler error sebelum spooled, atau Agent sementara bermasalah; snapshot lama dipakai kembali.",
+            "Gunakan Refetch and retry untuk PDF_INVALID atau dokumen sumber yang sudah diperbaiki di opsifin-main.",
+            "Pilih destination binding active pada Source Connection asal yang sama; Hub memindahkan binding_id dan printer_id bersama.",
+            "Refetch membuat persistent request lalu Horizon mengunduh/validasi di background; job tetap failed sampai sukses.",
+            "Setiap retry wajib reason, menaikkan run_number, menyimpan dokumen lama, menulis event/audit, dan supersede callback pending run lama.",
+            "Jangan menghapus print job untuk memaksa invoice diproses ulang."
+          ],
+          "files": [
+            "/app/Domain/Jobs/Services/ManualJobRetryService.php",
+            "/app/Domain/Jobs/Repositories/ManualJobRetryRepository.php",
+            "/app/Domain/Jobs/Jobs/ProcessRefetchRetry.php",
+            "/app/Console/Commands/DispatchRefetchRetriesCommand.php"
+          ]
+        },
+        {
+          "id": "REC-02",
+          "title": "[Perbaikan] Implementasi retensi snapshot dan event",
+          "deps": "Keputusan D4",
+          "desc": "Retensi membatasi risiko privasi dan pertumbuhan disk tanpa menghilangkan metadata audit serta hash bukti.",
+          "todo": [
+            "Tambahkan retention_days per tenant dengan default 90 hari dan tampilkan kebijakannya di Tenant/Platform Settings.",
+            "Isi documents.expires_at saat snapshot dibuat atau direfetch.",
+            "Scheduler menghapus file expired secara batch, mempertahankan row metadata, SHA-256, source_url, dan hubungan job.",
+            "Buat dry-run command, metric jumlah/bytes, audit ringkas, dan guard agar dokumen active retry/printing tidak terhapus.",
+            "Tetapkan retensi print_job_events 13 bulan; partisi baru diaktifkan hanya saat volume mendekati ambang PRD.",
+            "Uji tenant dengan kebijakan berbeda, file hilang, storage error, legal hold, dan retry setelah snapshot expired."
+          ],
+          "files": [
+            "/app/Domain/Jobs/Models/Document.php",
+            "/app/Domain/Tenancy/Models/Tenant.php",
+            "/database/migrations/2026_11_02_000000_create_source_and_delivery_tables.php",
+            "+/app/Console/Commands/PurgeExpiredDocumentsCommand.php",
+            "+/tests/Feature/Jobs/DocumentRetentionTest.php"
+          ]
+        },
+        {
+          "id": "REC-03",
+          "title": "[Perbaikan] Simpan diagnosis aman untuk item pull yang gagal",
+          "deps": "SRC-01",
+          "desc": "Setiap kegagalan intake harus dapat ditelusuri tanpa menyimpan credential atau seluruh payload customer ke log umum.",
+          "todo": [
+            "Klasifikasikan missing identity fields, PDF download, PDF validation, storage, duplicate race, dan unexpected error.",
+            "Simpan source_connection_id, binding_id, InvNo/ItemType/Version bila tersedia, error_code, pesan aman, dan timestamp.",
+            "Jangan membuang Throwable tanpa report; sanitasi URL credential/query dan batasi panjang pesan.",
+            "Tampilkan last pull summary dan item failure terbaru dalam modal binding/source dengan panel scroll.",
+            "Tambahkan counter/alert ketika failure rate melewati ambang, bukan alert untuk satu error sesaat.",
+            "Uji satu payload rusak tidak menahan payload lain dan bukti tenant A tidak terlihat oleh tenant B."
+          ],
+          "files": [
+            "/app/Domain/Sources/Services/SourcePullService.php",
+            "/app/Domain/Sources/Repositories/SourcePullRepository.php",
+            "/app/Filament/Resources/PrinterBindings/Pages/ListPrinterBindings.php",
+            "+/app/Domain/Sources/Models/SourcePullFailure.php",
+            "+/tests/Feature/Sources/SourcePullDiagnosticsTest.php"
+          ]
+        },
+        {
+          "id": "OPS-01",
+          "title": "[Operasional] Dashboard, alert, dan runbook sebelum pilot",
+          "deps": "SRC-02, FIN-03, REC-02, REC-03",
+          "desc": "MVP membutuhkan alert yang menjawab siapa terdampak dan aksi apa yang harus dilakukan, bukan sekadar counter merah.",
+          "todo": [
+            "Metric minimum: pull lag/duration/failure, queued age, lease expired before/after spool, failed jobs per code, callback age, disk snapshot bytes, Agent/printer availability.",
+            "Alert hanya untuk kondisi actionable: Agent offline, printer error menetap, oldest queued melewati SLA, callback mendekati expiry, disk mendekati batas.",
+            "Setiap alert membawa tenant, site, Agent/printer/binding/job, waktu, link modal, dan langkah pemulihan.",
+            "Dokumentasikan restart app/Horizon/scheduler, Redis/MySQL failure, restore backup, source down, dan rollback Agent release.",
+            "Verifikasi Horizon production hanya dapat diakses Platform Admin dan secret tidak muncul di log/dashboard.",
+            "Tetapkan SLO pilot: p95 ready-to-spooled <45 detik, tidak ada duplicate print, callback berhasil/tereskalasi <24 jam."
+          ],
+          "files": [
+            "/app/Filament/Widgets/GlobalOperationsOverview.php",
+            "/app/Filament/Widgets/OperationsOverview.php",
+            "/app/Providers/HorizonServiceProvider.php",
+            "/resources/views/filament/pages/documentation.blade.php",
+            "+/docs/runbooks/production-operations.md"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "e2e",
+      "tag": "QA",
+      "color": "red",
+      "navLabel": "QA gate",
+      "title": "Gate QA end-to-end dan chaos",
+      "desc": "Unit/feature test Hub tidak cukup untuk menyatakan print pipeline aman. Gate akhir harus melibatkan Agent production mode, spooler Windows, printer fisik, jaringan yang sengaja diputus, dan bukti callback opsifin-main.",
+      "mapFocus": "Happy path, simulation, physical printer, chaos, tenant isolation, duplicate prevention, recovery",
+      "tasks": [
+        {
+          "id": "QA-01",
+          "title": "[QA] Jalankan matriks E2E dari onboarding sampai callback",
+          "deps": "Seluruh perbaikan prioritas tinggi selesai",
+          "desc": "Simpan hasil per skenario beserta job_id, run_number, attempt_id, spooler JobId, SHA-256, callback status, screenshot, dan log terkait.",
+          "todo": [
+            "Happy path simulation: getData → snapshot → claim → completed → callback Success tanpa kertas.",
+            "Happy path printer fisik: cocokkan invoice, page count, kualitas/skala, spooler JobId, printed_at, dan status opsifin-main.",
+            "Dedupe: payload sama berulang hanya menghasilkan satu print job dan tidak ada cetak kedua.",
+            "Tenant isolation: Agent/URL/user tenant A tidak dapat claim, download, view, retry, atau callback data tenant B.",
+            "Chaos sebelum spool: matikan Agent setelah claim; lease kembali queued dan hanya satu print fisik terjadi.",
+            "Chaos setelah spool: putus jaringan/restart service; Hub tidak auto-reprint, Agent resume journal, dan operator dapat menyelesaikan hasil ambigu tanpa duplicate.",
+            "PDF invalid lalu Refetch and retry: snapshot lama tetap ada, Horizon memproses, run naik, callback per run konsisten.",
+            "Source/callback down >24 jam: expiry, alert, dan manual recovery mengikuti keputusan D6.",
+            "Retensi: file expired terhapus tanpa merusak metadata/timeline; active job dan legal hold aman.",
+            "Load/soak pilot: banyak tenant dengan satu source timeout tidak menaikkan pull lag tenant lain di luar SLA."
+          ],
+          "files": [
+            "/tests/Feature/Agent/V1/JobPipelineTest.php",
+            "/tests/Feature/Sources/SourcePullAndCallbackTest.php",
+            "/tests/Arch/TenancyTest.php",
+            "/docs/PRD.md",
+            "/contracts/agent-v1.yaml"
+          ]
+        }
+      ],
+      "matrix": {
+        "headers": [
+          "Skenario minimum",
+          "Hasil yang diharapkan",
+          "Bukti wajib"
+        ],
+        "rows": [
+          [
+            "Simulation happy path",
+            "Satu run menjadi printed dan callback Success; tidak ada kertas.",
+            "job/run/attempt, timeline, callback HTTP"
+          ],
+          [
+            "Printer fisik happy path",
+            "Dokumen benar keluar sekali; SHA/page count/JobId dapat ditelusuri.",
+            "Kertas, spooler JobId, snapshot hash"
+          ],
+          [
+            "Payload sama 3 kali",
+            "Satu job; dua duplicate_ignored; satu cetak.",
+            "Unique key dan timeline"
+          ],
+          [
+            "Agent mati sebelum spool",
+            "Lease expired kembali queued; attempt lama ditutup; satu attempt baru.",
+            "lease event dan attempt outcome"
+          ],
+          [
+            "Agent/jaringan putus setelah spool",
+            "Tidak ada submit PDF kedua tanpa keputusan operator.",
+            "spool journal, event, jumlah kertas"
+          ],
+          [
+            "GetJob ambigu tetapi kertas keluar",
+            "Operator confirm printed; callback Success tanpa retry fisik.",
+            "reason, actor, audit, callback run"
+          ],
+          [
+            "PDF_INVALID lalu diperbaiki",
+            "Refetch background membuat snapshot baru dan run baru; bukti lama tetap ada.",
+            "dua document_id/SHA dan retry request"
+          ],
+          [
+            "Cross-tenant claim/download/retry",
+            "Semua ditolak atau 404; tidak ada metadata bocor.",
+            "HTTP response dan unchanged DB"
+          ],
+          [
+            "Callback source mati >24 jam",
+            "Expired + alert; tidak terkirim diam-diam saat source pulih.",
+            "outbox state dan audit recovery"
+          ],
+          [
+            "50 tenant, satu timeout",
+            "Pull tenant sehat tetap dalam SLA; concurrency maksimal dua per tenant.",
+            "duration/lag metric per tenant"
+          ]
+        ]
+      }
+    }
+  ],
+  "resolved": {
+    "title": "Aturan keselamatan yang sudah berlaku dan wajib dipertahankan",
+    "navLabel": "Safety rules",
+    "items": [
+      "<strong>Tenant selalu eksplisit.</strong> Model bisnis memakai BelongsToTenant; tanpa context query kosong dan create ditolak.",
+      "<strong>Identity fail-closed.</strong> Source hanya operasional bila integration_id remote sama persis dengan tenant Hub.",
+      "<strong>Binding adalah route.</strong> Source identity dan destination printer dipindahkan bersama saat manual retry; route lintas source ditolak.",
+      "<strong>Dedupe tidak dihapus.</strong> Kunci unik tenant + InvNo + ItemType + VersionInv mencegah getData berulang mencetak dua kali.",
+      "<strong>Snapshot menjadi bukti.</strong> Agent mengunduh dari signed URL Hub dan mencocokkan SHA-256 sebelum mencetak.",
+      "<strong>Event idempoten dan append-only.</strong> event_id yang sama diterima sebagai duplicate, bukan diproses ulang.",
+      "<strong>Error setelah spool tidak auto-retry.</strong> Jalur print_error sudah menghentikan job sebagai failed karena hasil fisik ambigu.",
+      "<strong>Retry tidak menghapus histori.</strong> Run, attempt, dokumen, event, callback lama, destination lama/baru, reason, dan actor tetap dapat diaudit.",
+      "<strong>Availability mengikuti Agent.</strong> Printer tidak boleh terlihat Online bila heartbeat Agent stale/offline/revoked.",
+      "<strong>Mulai sederhana.</strong> Docker Compose + Laravel + MySQL + Redis/Horizon tetap cukup; tidak perlu Kafka, Kubernetes, atau database per tenant."
+    ]
+  },
+  "decisions": [
+    {
+      "id": "D1",
+      "title": "State saat lease habis setelah spooled",
+      "text": "Kode sekarang mengembalikan claimed dan printing ke queued. Jalur print_error sesudah spool justru berhenti sebagai failed karena risiko duplicate.",
+      "rec": "claimed sebelum spool tetap queued; printing/spooled menjadi failed dengan PRINT_RESULT_UNKNOWN dan menunggu rekonsiliasi operator. Hindari state baru dulu agar perubahan tetap sederhana."
+    },
+    {
+      "id": "D2",
+      "title": "Siapa boleh mengonfirmasi kertas sudah tercetak?",
+      "text": "Tanpa aksi confirm, satu-satunya pemulihan adalah retry yang mungkin mencetak invoice kedua.",
+      "rec": "Platform Admin, Tenant Admin, dan Operator tenant boleh Confirm physically printed hanya untuk failure ambigu, dengan dialog dua tahap, reason wajib, audit, dan bukti spooler JobId."
+    },
+    {
+      "id": "D3",
+      "title": "Kebijakan host Link PDF",
+      "text": "Sebagian instance dapat menghasilkan Link dengan host berbeda atau internal, jadi aturan same-host mutlak berisiko memutus tenant yang valid.",
+      "rec": "Default host Base URL + allowlist host tambahan per connection. Tolak loopback/link-local/metadata/private yang tidak disetujui dan validasi setiap redirect."
+    },
+    {
+      "id": "D4",
+      "title": "Retensi snapshot dokumen",
+      "text": "PRD menyebut 90 hari, tetapi data lokal belum memiliki expiry aktif dan belum ada purge.",
+      "rec": "Default 90 hari per tenant, metadata + SHA tetap permanen sesuai retensi histori, dukung legal hold sebelum pilot production."
+    },
+    {
+      "id": "D5",
+      "title": "Kapan source pull dipindah ke Horizon?",
+      "text": "Scheduler serial cukup untuk satu binding lokal, tetapi tidak memenuhi isolation/jitter dan mudah mengalami head-of-line blocking saat tenant bertambah.",
+      "rec": "Kerjakan sebelum pilot multi-tenant, tetap dalam monolith: scheduler dispatch, Horizon worker, unique lock binding, throttle dua request per tenant."
+    },
+    {
+      "id": "D6",
+      "title": "Callback setelah melewati 24 jam",
+      "text": "Saat ini pending callback bisa melewati expiry bila source inactive dan terkirim kemudian saat source aktif kembali.",
+      "rec": "Tandai expired, alert operator, dan jangan kirim otomatis. Recovery wajib action manual dengan reason agar perubahan terlambat di opsifin-main dapat diaudit."
+    }
+  ]
+}

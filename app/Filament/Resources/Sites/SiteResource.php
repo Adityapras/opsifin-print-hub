@@ -13,6 +13,7 @@ use App\Filament\Resources\Tenants\TenantResource;
 use App\Models\User;
 use BackedEnum;
 use Filament\Actions\Action;
+use Filament\Actions\ActionGroup;
 use Filament\Actions\EditAction;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\Textarea;
@@ -110,22 +111,29 @@ final class SiteResource extends Resource
             ])
             ->defaultSort('name')
             ->recordActions([
-                Action::make('pairingCode')
-                    ->label('Install Agent here')
-                    ->icon(Heroicon::OutlinedKey)
-                    ->color('warning')
-                    ->visible(fn (): bool => self::canManageFleet())
-                    ->action(function (Site $record, PairingCodeService $pairingCodes): void {
-                        $code = $pairingCodes->issue($record);
+                ActionGroup::make([
+                    Action::make('pairingCode')
+                        ->label('Install Agent here')
+                        ->icon(Heroicon::OutlinedKey)
+                        ->color('warning')
+                        ->visible(fn (): bool => self::canManageFleet())
+                        ->action(function (Site $record, PairingCodeService $pairingCodes): void {
+                            $code = $pairingCodes->issue($record);
 
-                        Notification::make()
-                            ->title('Pairing code ready')
-                            ->body("Client **{$record->tenant->name}** · Site **{$record->name}** · Code **{$code}**. Valid for 15 minutes and usable once.")
-                            ->success()
-                            ->persistent()
-                            ->send();
-                    }),
-                EditAction::make(),
+                            Notification::make()
+                                ->title('Pairing code ready')
+                                ->body("Client **{$record->tenant->name}** · Site **{$record->name}** · Code **{$code}**. Valid for 15 minutes and usable once.")
+                                ->success()
+                                ->persistent()
+                                ->send();
+                        }),
+                    EditAction::make(),
+                ])
+                    ->label('Actions')
+                    ->icon(Heroicon::OutlinedEllipsisVertical)
+                    ->color('gray')
+                    ->button()
+                    ->dropdownAutoPlacement(),
             ])
             ->emptyStateHeading('No sites yet')
             ->emptyStateDescription('Create the first location before installing a Print Agent.')

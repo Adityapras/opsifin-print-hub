@@ -4,9 +4,12 @@ namespace App\Domain\Fleet\Services;
 
 use App\Domain\Fleet\Models\Agent;
 use App\Domain\Fleet\Models\Printer;
+use App\Domain\Sources\Services\AgentSourceIntervalResolver;
 
 final class AgentConfigBuilder
 {
+    public function __construct(private readonly AgentSourceIntervalResolver $sourceIntervals) {}
+
     /**
      * @return array<string, mixed>
      */
@@ -28,6 +31,7 @@ final class AgentConfigBuilder
         return [
             'claim_interval_s' => config('print_hub.claim_interval_s'),
             'heartbeat_interval_s' => config('print_hub.heartbeat_interval_s'),
+            'source_poll_interval_s' => $this->sourceIntervals->resolve($agent->getKey()),
             'log_level' => config('print_hub.agent_log_level'),
             'printers' => $printers,
         ];

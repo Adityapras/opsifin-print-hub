@@ -8,6 +8,8 @@ use Illuminate\Http\UploadedFile;
 
 final class AgentCommandService
 {
+    public function __construct(private readonly AgentUpdateLifecycleService $updates) {}
+
     /** @param array<string, mixed> $args */
     public function dispatch(Agent $agent, string $type, array $args = []): AgentCommand
     {
@@ -33,10 +35,12 @@ final class AgentCommandService
 
         foreach ($commands as $command) {
             if ($command->status === 'pending') {
+                $this->updates->prepareCommandForDelivery($command);
                 $command->update([
                     'status' => 'delivered',
                     'delivered_at' => now(),
                 ]);
+                $this->updates->commandDelivered($command);
             }
         }
 
@@ -80,5 +84,7 @@ final class AgentCommandService
             'attachment_disk' => $attachmentPath === null ? null : 'local',
             'attachment_path' => $attachmentPath,
         ]);
+
+        $this->updates->commandResult($command->refresh());
     }
 }

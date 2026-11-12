@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\SourceConnections;
 
+use App\Domain\Sources\Enums\SourceIdentityStatus;
 use App\Domain\Sources\Models\SourceConnection;
 use App\Domain\Sources\Services\SourceConnectionTestService;
 use App\Domain\Tenancy\Models\Tenant;
@@ -11,8 +12,10 @@ use App\Filament\Resources\SourceConnections\Pages\EditSourceConnection;
 use App\Filament\Resources\SourceConnections\Pages\ListSourceConnections;
 use App\Filament\Resources\Tenants\TenantResource;
 use App\Models\User;
+use App\Support\DateTimeDisplay;
 use BackedEnum;
 use Filament\Actions\Action;
+use Filament\Actions\ActionGroup;
 use Filament\Actions\EditAction;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\TextInput;
@@ -119,8 +122,9 @@ final class SourceConnectionResource extends Resource
                         ->required(),
                     Toggle::make('is_active')
                         ->label('Active connection')
-                        ->helperText('Disable to stop all pulls and callbacks for this connection.')
-                        ->default(true)
+                        ->helperText('Available only after Integration Identity is verified. Disable to stop pulls and callbacks.')
+                        ->default(false)
+                        ->disabled(fn (?SourceConnection $record): bool => $record?->identity_status !== SourceIdentityStatus::Verified)
                         ->columnSpanFull(),
                 ])
                 ->columns(2),
@@ -148,9 +152,19 @@ final class SourceConnectionResource extends Resource
                 IconColumn::make('is_active')
                     ->label('Active')
                     ->boolean(),
+                TextColumn::make('identity_status')
+                    ->label('Identity')
+                    ->badge()
+                    ->formatStateUsing(fn (SourceIdentityStatus $state): string => ucfirst($state->value))
+                    ->color(fn (SourceIdentityStatus $state): string => match ($state) {
+                        SourceIdentityStatus::Verified => 'success',
+                        SourceIdentityStatus::Mismatch => 'danger',
+                        SourceIdentityStatus::Unavailable => 'warning',
+                        SourceIdentityStatus::Pending => 'gray',
+                    }),
                 TextColumn::make('last_ok_at')
                     ->label('Last healthy')
-                    ->since(fn (): string => self::tenantTimezone())
+                    ->formatStateUsing(fn (mixed $state): string => DateTimeDisplay::relativeWithClock($state, self::tenantTimezone()))
                     ->placeholder('Never')
                     ->tooltip(fn (SourceConnection $record): ?string => $record->last_ok_at?->timezone(self::tenantTimezone())->format('d M Y, H:i:s'))
                     ->sortable(),
@@ -163,23 +177,30 @@ final class SourceConnectionResource extends Resource
             ])
             ->defaultSort('name')
             ->recordActions([
-                Action::make('testConnection')
-                    ->label('Test connection')
-                    ->icon(Heroicon::OutlinedSignal)
-                    ->visible(fn (): bool => self::canManageConfiguration())
-                    ->action(function (SourceConnection $record, SourceConnectionTestService $tester): void {
-                        $result = $tester->test($record);
-                        $notification = Notification::make()
-                            ->title($result->successful ? 'Connection successful' : 'Connection failed')
-                            ->body($result->message);
+                ActionGroup::make([
+                    Action::make('testConnection')
+                        ->label('Verify identity')
+                        ->icon(Heroicon::OutlinedShieldCheck)
+                        ->visible(fn (): bool => self::canManageConfiguration())
+                        ->action(function (SourceConnection $record, SourceConnectionTestService $tester): void {
+                            $result = $tester->test($record);
+                            $notification = Notification::make()
+                                ->title($result->successful ? 'Identity verified' : 'Identity verification failed')
+                                ->body($result->message);
 
-                        $result->successful
-                            ? $notification->success()
-                            : $notification->danger()->persistent();
+                            $result->successful
+                                ? $notification->success()
+                                : $notification->danger()->persistent();
 
-                        $notification->send();
-                    }),
-                EditAction::make(),
+                            $notification->send();
+                        }),
+                    EditAction::make(),
+                ])
+                    ->label('Actions')
+                    ->icon(Heroicon::OutlinedEllipsisVertical)
+                    ->color('gray')
+                    ->button()
+                    ->dropdownAutoPlacement(),
             ])
             ->emptyStateHeading('No Opsifin connections yet')
             ->emptyStateDescription('Add the tenant REST endpoint before creating a printer binding.')

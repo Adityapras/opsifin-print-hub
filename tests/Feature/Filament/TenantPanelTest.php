@@ -16,6 +16,7 @@ use App\Http\Middleware\SetFilamentTenantContext;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Route;
+use Illuminate\Support\Facades\Gate;
 use Livewire\Livewire;
 
 function grantPanelMembership(User $user, Tenant $tenant, string $role): Membership
@@ -136,6 +137,7 @@ it('hanya menampilkan data tenant yang ada di URL panel', function () {
     $this->actingAs($user)
         ->get('/admin/tenants/panel-a/source-connections')
         ->assertOk()
+        ->assertSee('fi-page-sub-navigation-tabs', false)
         ->assertSee('Sumber Tenant A')
         ->assertDontSee('Sumber Tenant B');
 
@@ -248,6 +250,9 @@ it('merender observabilitas job dan callback tenant', function () {
     $this->actingAs($user)
         ->get('/admin/tenants/operations')
         ->assertOk()
+        ->assertSee('fi-page-sub-navigation-tabs', false)
+        ->assertSee('Overview')
+        ->assertSee('Integration identity')
         ->assertSee('Tenant overview')
         ->assertSee('Managed estate')
         ->assertSee('/admin/tenants/operations/source-connections', false)
@@ -258,19 +263,19 @@ it('merender observabilitas job dan callback tenant', function () {
         ->get('/admin/tenants/operations/print-jobs')
         ->assertOk()
         ->assertSee('INV-PANEL-001')
-        ->assertSee('PAPER_OUT');
+        ->assertSee('PAPER_OUT')
+        ->assertSee('Activity');
 
     $this->get("/admin/tenants/operations/print-jobs/{$job->getKey()}")
-        ->assertOk()
-        ->assertSee('print_error');
+        ->assertNotFound();
 
     $this->get('/admin/tenants/operations/callback-outboxes')
         ->assertOk()
-        ->assertSee('INV-PANEL-001');
+        ->assertSee('INV-PANEL-001')
+        ->assertSee('Details');
 
     $this->get("/admin/tenants/operations/callback-outboxes/{$outbox->getKey()}")
-        ->assertOk()
-        ->assertSee('PrintProcess');
+        ->assertNotFound();
 });
 
 it('memberi membership tenant melalui command bootstrap', function () {
@@ -307,7 +312,11 @@ it('merender control plane global dan membatasi menu administratif', function ()
 
     $this->get('/admin/platform-settings')
         ->assertOk()
-        ->assertSee('Internal team only');
+        ->assertSee('Internal team only')
+        ->assertSee('Open Horizon')
+        ->assertSee('/horizon', false);
+
+    expect(Gate::forUser($platformAdmin)->allows('viewHorizon'))->toBeTrue();
 
     $this->get('/admin/tenants/control-plane/identity')
         ->assertOk()
@@ -321,8 +330,16 @@ it('merender control plane global dan membatasi menu administratif', function ()
         ->get('/admin/internal-team')
         ->assertForbidden();
 
+    expect(Gate::forUser($operator)->allows('viewHorizon'))->toBeFalse();
+
     $this->get('/admin/platform-settings')
         ->assertForbidden();
+
+    $this->get('/admin/documentation')
+        ->assertOk()
+        ->assertSee('From invoice decision to verified print.')
+        ->assertSee('End-to-end document journey.')
+        ->assertSee('Onboard a tenant safely.');
 });
 
 it('mengarsipkan tenant tanpa menghapus estate dan menghentikan akses agent', function () {

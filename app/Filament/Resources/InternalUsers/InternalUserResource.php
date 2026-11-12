@@ -7,7 +7,9 @@ use App\Filament\Resources\InternalUsers\Pages\CreateInternalUser;
 use App\Filament\Resources\InternalUsers\Pages\EditInternalUser;
 use App\Filament\Resources\InternalUsers\Pages\ListInternalUsers;
 use App\Models\User;
+use App\Support\DateTimeDisplay;
 use BackedEnum;
+use Filament\Actions\ActionGroup;
 use Filament\Actions\EditAction;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\Repeater;
@@ -100,10 +102,20 @@ final class InternalUserResource extends Resource
                 TextColumn::make('email')->searchable()->copyable(),
                 IconColumn::make('is_platform_admin')->label('Platform admin')->boolean(),
                 TextColumn::make('tenants.name')->label('Tenant assignments')->badge()->separator(','),
-                TextColumn::make('updated_at')->label('Updated')->since()->sortable(),
+                TextColumn::make('updated_at')
+                    ->label('Updated')
+                    ->formatStateUsing(fn (mixed $state): string => DateTimeDisplay::relativeWithClock($state, config('app.timezone')))
+                    ->sortable(),
             ])
             ->recordActions([
-                EditAction::make(),
+                ActionGroup::make([
+                    EditAction::make(),
+                ])
+                    ->label('Actions')
+                    ->icon(Heroicon::OutlinedEllipsisVertical)
+                    ->color('gray')
+                    ->button()
+                    ->dropdownAutoPlacement(),
             ])
             ->defaultSort('name')
             ->emptyStateHeading('No internal users')

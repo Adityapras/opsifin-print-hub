@@ -6,14 +6,16 @@ use App\Domain\Delivery\Models\CallbackOutbox;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Services\TenantContext;
 use App\Filament\Resources\CallbackOutboxes\Pages\ListCallbackOutboxes;
-use App\Filament\Resources\CallbackOutboxes\Pages\ViewCallbackOutbox;
 use App\Filament\Resources\Tenants\TenantResource;
+use App\Support\DateTimeDisplay;
 use BackedEnum;
+use Filament\Actions\ActionGroup;
 use Filament\Actions\ViewAction;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
+use Filament\Support\Enums\Width;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
@@ -44,6 +46,7 @@ final class CallbackOutboxResource extends Resource
                 ->icon(Heroicon::OutlinedPaperAirplane)
                 ->schema([
                     TextEntry::make('job.inv_no')->label('Document number')->copyable()->weight('bold'),
+                    TextEntry::make('job_run')->label('Print run'),
                     TextEntry::make('status')
                         ->label('Status')
                         ->badge()
@@ -92,6 +95,10 @@ final class CallbackOutboxResource extends Resource
                     ->searchable()
                     ->weight('semibold')
                     ->copyable(),
+                TextColumn::make('job_run')
+                    ->label('Run')
+                    ->numeric()
+                    ->sortable(),
                 TextColumn::make('sourceConnection.name')
                     ->label('Source')
                     ->badge()
@@ -110,12 +117,12 @@ final class CallbackOutboxResource extends Resource
                     ->placeholder('—'),
                 TextColumn::make('next_attempt_at')
                     ->label('Next scheduled attempt')
-                    ->since(fn (): string => self::tenantTimezone())
+                    ->formatStateUsing(fn (mixed $state): string => DateTimeDisplay::relativeWithClock($state, self::tenantTimezone()))
                     ->placeholder('—')
                     ->sortable(),
                 TextColumn::make('sent_at')
                     ->label('Sent')
-                    ->since(fn (): string => self::tenantTimezone())
+                    ->formatStateUsing(fn (mixed $state): string => DateTimeDisplay::relativeWithClock($state, self::tenantTimezone()))
                     ->placeholder('—')
                     ->sortable()
                     ->toggleable(),
@@ -126,12 +133,24 @@ final class CallbackOutboxResource extends Resource
                         'pending' => 'Pending',
                         'sent' => 'Sent',
                         'failed' => 'Permanently failed',
+                        'superseded' => 'Superseded by retry',
                     ]),
             ])
             ->defaultSort('created_at', 'desc')
             ->poll('10s')
             ->recordActions([
-                ViewAction::make(),
+                ActionGroup::make([
+                    ViewAction::make()
+                        ->label('Details')
+                        ->modalHeading(fn (CallbackOutbox $record): string => "Callback details · {$record->job->inv_no}")
+                        ->modalDescription('Inspect delivery payload and response without leaving the outbox list.')
+                        ->modalWidth(Width::SevenExtraLarge),
+                ])
+                    ->label('Actions')
+                    ->icon(Heroicon::OutlinedEllipsisVertical)
+                    ->color('gray')
+                    ->button()
+                    ->dropdownAutoPlacement(),
             ])
             ->emptyStateHeading('Outbox is empty')
             ->emptyStateDescription('Terminal callbacks appear when a job is printed, skipped, or permanently failed.')
@@ -154,7 +173,6 @@ final class CallbackOutboxResource extends Resource
     {
         return [
             'index' => ListCallbackOutboxes::route('/'),
-            'view' => ViewCallbackOutbox::route('/{record}'),
         ];
     }
 

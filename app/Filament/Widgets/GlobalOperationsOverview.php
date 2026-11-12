@@ -2,6 +2,7 @@
 
 namespace App\Filament\Widgets;
 
+use App\Domain\Fleet\Models\Printer;
 use App\Domain\Jobs\Enums\PrintJobState;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Models\User;
@@ -35,9 +36,12 @@ final class GlobalOperationsOverview extends StatsOverviewWidget
                         ->whereNull('last_seen_at')
                         ->orWhere('last_seen_at', '<', now()->subMinutes(3))),
                 'printers as active_printers_count' => fn (Builder $query): Builder => $query->where('is_active', true),
-                'printers as problem_printers_count' => fn (Builder $query): Builder => $query
-                    ->where('is_active', true)
-                    ->whereNotIn('status', ['ONLINE', 'READY', 'IDLE']),
+                'printers as problem_printers_count' => function (Builder $query): Builder {
+                    /** @var Builder<Printer> $query */
+                    return $query
+                        ->where('is_active', true)
+                        ->withEffectiveIssue();
+                },
                 'printJobs as failed_jobs_count' => fn (Builder $query): Builder => $query
                     ->where('state', PrintJobState::Failed)
                     ->where('received_at', '>=', now()->subDay()),

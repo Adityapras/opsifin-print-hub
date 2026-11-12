@@ -3,6 +3,7 @@
 use App\Http\Controllers\Agent\V1\ClaimJobsController;
 use App\Http\Controllers\Agent\V1\CommandResultController;
 use App\Http\Controllers\Agent\V1\DownloadDocumentController;
+use App\Http\Controllers\Agent\V1\DownloadUpdatePackageController;
 use App\Http\Controllers\Agent\V1\EnrollController;
 use App\Http\Controllers\Agent\V1\HeartbeatController;
 use App\Http\Controllers\Agent\V1\JobEventsController;
@@ -24,4 +25,8 @@ Route::prefix('agent/v1')->group(function (): void {
     Route::get('documents/{documentId}', DownloadDocumentController::class)
         ->middleware('signed')
         ->name('agent.v1.documents.show');
+
+    Route::get('updates/{deploymentId}/package', DownloadUpdatePackageController::class)
+        ->middleware('signed')
+        ->name('agent.v1.updates.package');
 });

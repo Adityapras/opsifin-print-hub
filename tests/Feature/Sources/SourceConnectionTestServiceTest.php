@@ -1,5 +1,6 @@
 <?php
 
+use App\Domain\Sources\Enums\SourceIdentityStatus;
 use App\Domain\Sources\Models\SourceConnection;
 use App\Domain\Sources\Services\SourceConnectionTestService;
 use App\Domain\Tenancy\Models\Tenant;
@@ -20,25 +21,49 @@ function connectionTestFixture(string $baseUrl = 'https://opsifin.test/rest/auto
     ]);
 }
 
-it('menguji endpoint PrinterStatus dengan credential terenkripsi', function () {
+it('memverifikasi identity endpoint dengan credential terenkripsi', function () {
     $connection = connectionTestFixture();
 
     Http::fake([
-        'https://opsifin.test/rest/autoprint/PrinterStatus' => Http::response(['ok' => true]),
+        'https://opsifin.test/rest/autoprint/identity' => Http::response([
+            'integration_id' => $connection->tenant->integration_id,
+        ]),
     ]);
 
     $result = app(SourceConnectionTestService::class)->test($connection);
 
     expect($result->successful)->toBeTrue()
-        ->and($result->code)->toBe('OK')
+        ->and($result->code)->toBe('IDENTITY_VERIFIED')
+        ->and($connection->fresh()->identity_status)->toBe(SourceIdentityStatus::Verified)
+        ->and($connection->fresh()->identity_verified_at)->not->toBeNull()
+        ->and($connection->fresh()->is_active)->toBeFalse()
         ->and($connection->fresh()->last_ok_at)->not->toBeNull()
         ->and($connection->fresh()->last_error)->toBeNull();
 
-    Http::assertSent(fn (Request $request): bool => $request->url() === 'https://opsifin.test/rest/autoprint/PrinterStatus'
-        && $request->hasHeader('Authorization', 'Basic '.base64_encode('rest-user:rest-password'))
-        && $request['PrinterName'] === '__PRINT_HUB_CONNECTION_TEST__'
-        && $request['Identifier'] === '__PRINT_HUB__'
-        && $request['PrinterStatus'] === 'ONLINE');
+    Http::assertSent(fn (Request $request): bool => $request->method() === 'GET'
+        && $request->url() === 'https://opsifin.test/rest/autoprint/identity'
+        && $request->hasHeader('Authorization', 'Basic '.base64_encode('rest-user:rest-password')));
+
+    $connection->update(['is_active' => true]);
+    expect($connection->fresh()->is_active)->toBeTrue();
+
+    $connection->update(['base_url' => 'https://other-opsifin.test/rest/autoprint']);
+    expect($connection->fresh()->identity_status)->toBe(SourceIdentityStatus::Pending)
+        ->and($connection->fresh()->identity_verified_at)->toBeNull()
+        ->and($connection->fresh()->is_active)->toBeFalse();
+});
+
+it('menolak connection ketika integration id remote milik tenant lain', function () {
+    $connection = connectionTestFixture();
+    Http::fake(['*' => Http::response(['integration_id' => fake()->uuid()])]);
+
+    $result = app(SourceConnectionTestService::class)->test($connection);
+
+    expect($result->successful)->toBeFalse()
+        ->and($result->code)->toBe('IDENTITY_MISMATCH')
+        ->and($connection->fresh()->identity_status)->toBe(SourceIdentityStatus::Mismatch)
+        ->and($connection->fresh()->is_active)->toBeFalse()
+        ->and($connection->fresh()->last_error)->toContain('different tenant');
 });
 
 it('memberi diagnosis jelas untuk respons HTTP sumber', function (int $status, string $code, string $message) {
@@ -53,7 +78,7 @@ it('memberi diagnosis jelas untuk respons HTTP sumber', function (int $status, s
         ->and($connection->fresh()->last_error)->toBe($result->message);
 })->with([
     'credential ditolak' => [401, 'AUTH_FAILED', 'password'],
-    'endpoint salah' => [404, 'ENDPOINT_NOT_FOUND', 'Base URL'],
+    'identity endpoint belum ada' => [404, 'IDENTITY_ENDPOINT_NOT_FOUND', 'identity endpoint'],
     'server gagal' => [500, 'HTTP_ERROR', 'HTTP 500'],
 ]);
 

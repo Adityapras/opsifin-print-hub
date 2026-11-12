@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Agent\V1;
 use App\Domain\Fleet\Models\Agent;
 use App\Domain\Fleet\Services\AgentCommandService;
 use App\Domain\Fleet\Services\AgentConfigBuilder;
+use App\Domain\Fleet\Services\AgentUpdateLifecycleService;
 use App\Domain\Fleet\Services\HeartbeatService;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Agent\V1\HeartbeatRequest;
@@ -17,10 +18,12 @@ final class HeartbeatController extends Controller
         HeartbeatService $heartbeat,
         AgentConfigBuilder $configBuilder,
         AgentCommandService $commands,
+        AgentUpdateLifecycleService $updates,
     ): JsonResponse {
         /** @var Agent $authenticatedAgent */
         $authenticatedAgent = $request->attributes->get('agent');
         $agent = $heartbeat->record($authenticatedAgent, $request->validated());
+        $updates->observeHeartbeat($agent, $request->validated('update'));
 
         $response = [
             'server_time' => now()->utc()->toIso8601String(),

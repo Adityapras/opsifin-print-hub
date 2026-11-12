@@ -3,6 +3,7 @@
 use App\Domain\Fleet\Models\Agent;
 use App\Domain\Fleet\Models\Printer;
 use App\Domain\Fleet\Models\Site;
+use App\Domain\Sources\Enums\SourceIdentityStatus;
 use App\Domain\Sources\Exceptions\PrinterBindingSyncException;
 use App\Domain\Sources\Models\PrinterBinding;
 use App\Domain\Sources\Models\SourceConnection;
@@ -39,6 +40,11 @@ function bindingSyncFixture(string $code = 'binding-sync'): array
         'username' => 'rest-user',
         'password_enc' => 'rest-password',
     ]);
+    $connection->forceFill([
+        'identity_status' => SourceIdentityStatus::Verified,
+        'remote_integration_id' => $tenant->integration_id,
+        'identity_verified_at' => now(),
+    ])->saveQuietly();
 
     return compact('tenant', 'site', 'agent', 'printer', 'connection');
 }
@@ -80,6 +86,21 @@ it('menyinkronkan binding baru ke endpoint printerName sebelum menyimpannya', fu
     });
 });
 
+it('menolak binding sebelum source connection terverifikasi', function () {
+    $fixture = bindingSyncFixture('binding-unverified');
+    $fixture['connection']->forceFill([
+        'identity_status' => SourceIdentityStatus::Pending,
+        'identity_verified_at' => null,
+    ])->saveQuietly();
+    Http::fake();
+
+    expect(fn () => app(PrinterBindingService::class)->create(bindingAttributes($fixture)))
+        ->toThrow(PrinterBindingSyncException::class, 'Verify the Opsifin Integration Identity');
+
+    expect(PrinterBinding::query()->count())->toBe(0);
+    Http::assertNothingSent();
+});
+
 it('mengirim nilai nama lama saat routing binding diubah', function () {
     $fixture = bindingSyncFixture('binding-update');
     $binding = PrinterBinding::query()->create(bindingAttributes($fixture));
@@ -106,11 +127,13 @@ it('mengirim nilai nama lama saat routing binding diubah', function () {
 it('tidak memanggil printerName ketika hanya status aktif binding berubah', function () {
     $fixture = bindingSyncFixture('binding-toggle');
     $binding = PrinterBinding::query()->create(bindingAttributes($fixture));
+    $oldConfigVersion = $fixture['agent']->fresh()->config_version;
     Http::fake();
 
     $updated = app(PrinterBindingService::class)->update($binding, ['is_active' => true]);
 
-    expect($updated->is_active)->toBeTrue();
+    expect($updated->is_active)->toBeTrue()
+        ->and($fixture['agent']->fresh()->config_version)->toBe($oldConfigVersion + 1);
     Http::assertNothingSent();
 });
 

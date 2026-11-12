@@ -3,6 +3,7 @@
 namespace App\Domain\Sources\Services;
 
 use App\Domain\Jobs\Services\JobIntakeService;
+use App\Domain\Sources\Enums\SourceIdentityStatus;
 use App\Domain\Sources\Exceptions\InvalidPdfException;
 use App\Domain\Sources\Models\PrinterBinding;
 use App\Domain\Sources\Repositories\SourcePullRepository;
@@ -18,7 +19,7 @@ final class SourcePullService
 {
     public function __construct(
         private readonly LegacyOpsifinClient $client,
-        private readonly PdfInspector $pdfInspector,
+        private readonly SourceDocumentFetcher $documentFetcher,
         private readonly JobIntakeService $jobs,
         private readonly SourcePullRepository $repository,
     ) {}
@@ -29,7 +30,12 @@ final class SourcePullService
         $result = ['received' => 0, 'queued' => 0, 'skipped' => 0, 'failed' => 0, 'duplicates' => 0];
         $binding->loadMissing(['sourceConnection', 'printer']);
 
-        if ($binding->is_active === false || $binding->sourceConnection->is_active === false || $binding->printer->is_active === false) {
+        if (
+            $binding->is_active === false
+            || $binding->sourceConnection->is_active === false
+            || $binding->sourceConnection->identity_status !== SourceIdentityStatus::Verified
+            || $binding->printer->is_active === false
+        ) {
             return $result;
         }
 
@@ -94,8 +100,7 @@ final class SourcePullService
         }
 
         try {
-            $contents = $this->client->downloadPdf($binding->sourceConnection, $link);
-            $metadata = $this->pdfInspector->inspect($contents);
+            $document = $this->documentFetcher->fetch($binding->sourceConnection, $link);
         } catch (InvalidPdfException) {
             $this->jobs->fail($binding, $payload, 'PDF_INVALID');
 
@@ -108,15 +113,16 @@ final class SourcePullService
 
         $path = sprintf('tenants/%s/documents/%s.pdf', $binding->tenant_id, Str::uuid7());
 
-        if (! Storage::disk('local')->put($path, $contents)) {
+        if (! Storage::disk('local')->put($path, $document['contents'])) {
             throw new RuntimeException('The PDF could not be saved to local storage.');
         }
 
         try {
-            $this->jobs->queue($binding, $payload, $metadata + [
+            unset($document['contents']);
+
+            $this->jobs->queue($binding, $payload, $document + [
                 'disk' => 'local',
                 'path' => $path,
-                'source_url' => $link,
             ]);
         } catch (Throwable $exception) {
             Storage::disk('local')->delete($path);

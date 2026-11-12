@@ -2,6 +2,7 @@
 
 namespace App\Domain\Sources\Services;
 
+use App\Domain\Sources\Enums\SourceIdentityStatus;
 use App\Domain\Sources\Models\PrinterBinding;
 use App\Domain\Sources\Models\SourceConnection;
 use Illuminate\Http\Client\PendingRequest;
@@ -14,6 +15,8 @@ final class LegacyOpsifinClient
     /** @return array<int, array<string, mixed>> */
     public function pull(SourceConnection $connection, PrinterBinding $binding): array
     {
+        $this->assertVerified($connection);
+
         $response = $this->authenticated($connection)
             ->post($this->url($connection->base_url, 'getData'), [
                 'VersionAPI' => $connection->api_version,
@@ -34,6 +37,7 @@ final class LegacyOpsifinClient
 
     public function downloadPdf(SourceConnection $connection, string $url): string
     {
+        $this->assertVerified($connection);
         $this->assertHttpUrl($url);
 
         $response = Http::accept('application/pdf')
@@ -54,6 +58,7 @@ final class LegacyOpsifinClient
     /** @param array<string, mixed> $payload */
     public function sendCallback(SourceConnection $connection, string $endpoint, array $payload): Response
     {
+        $this->assertVerified($connection);
         $this->assertHttpUrl($endpoint);
 
         return $this->authenticated($connection)->post($endpoint, $payload);
@@ -62,6 +67,8 @@ final class LegacyOpsifinClient
     /** @param array<string, string> $payload */
     public function sendPrinterStatus(SourceConnection $connection, array $payload): Response
     {
+        $this->assertVerified($connection);
+
         return $this->authenticated($connection)
             ->post($this->url($connection->base_url, 'PrinterStatus'), $payload);
     }
@@ -69,8 +76,16 @@ final class LegacyOpsifinClient
     /** @param array<string, int|string> $payload */
     public function syncPrinterBinding(SourceConnection $connection, array $payload): Response
     {
+        $this->assertVerified($connection);
+
         return $this->authenticated($connection)
             ->post($this->url($connection->base_url, 'printerName'), $payload);
+    }
+
+    public function identity(SourceConnection $connection): Response
+    {
+        return $this->authenticated($connection)
+            ->get($this->url($connection->base_url, 'identity'));
     }
 
     private function authenticated(SourceConnection $connection): PendingRequest
@@ -93,6 +108,13 @@ final class LegacyOpsifinClient
     {
         if (! filter_var($url, FILTER_VALIDATE_URL) || ! in_array(parse_url($url, PHP_URL_SCHEME), ['http', 'https'], true)) {
             throw new RuntimeException('The source URL is invalid.');
+        }
+    }
+
+    private function assertVerified(SourceConnection $connection): void
+    {
+        if ($connection->identity_status !== SourceIdentityStatus::Verified) {
+            throw new RuntimeException('The Opsifin connection identity has not been verified.');
         }
     }
 }

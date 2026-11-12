@@ -6,6 +6,7 @@ use App\Domain\Fleet\Models\Site;
 use App\Domain\Fleet\Services\PairingCodeService;
 use App\Domain\Tenancy\Services\TenantContext;
 use App\Filament\Resources\Agents\AgentResource;
+use App\Filament\Resources\Tenants\Concerns\HasTenantSubNavigation;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Select;
 use Filament\Notifications\Notification;
@@ -14,6 +15,8 @@ use Filament\Support\Icons\Heroicon;
 
 final class ListAgents extends ListRecords
 {
+    use HasTenantSubNavigation;
+
     protected static string $resource = AgentResource::class;
 
     protected function getHeaderActions(): array

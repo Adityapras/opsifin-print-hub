@@ -20,18 +20,26 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
  * @property string|null $document_id
  * @property string|null $binding_id
  * @property string|null $lease_agent_id
+ * @property array<string, mixed> $source_payload
  * @property PrintJobState $state
  * @property int $attempt_count
+ * @property int $run_number
  * @property CarbonImmutable|null $lease_until
  * @property CarbonImmutable $received_at
  * @property CarbonImmutable|null $printed_at
+ * @property CarbonImmutable|null $reported_at
  * @property Document|null $document
  * @property Printer $printer
+ * @property PrintJobRetryRequest|null $latestRetryRequest
  */
 class PrintJob extends Model
 {
     use BelongsToTenant;
     use HasUuids;
+
+    protected $attributes = [
+        'run_number' => 1,
+    ];
 
     protected $fillable = [
         'printer_id',
@@ -49,6 +57,7 @@ class PrintJob extends Model
         'source_payload',
         'state',
         'attempt_count',
+        'run_number',
         'lease_agent_id',
         'lease_until',
         'available_at',
@@ -65,6 +74,7 @@ class PrintJob extends Model
             'is_hardcopy' => 'boolean',
             'source_payload' => 'array',
             'attempt_count' => 'integer',
+            'run_number' => 'integer',
             'lease_until' => 'immutable_datetime',
             'available_at' => 'immutable_datetime',
             'received_at' => 'immutable_datetime',
@@ -112,6 +122,24 @@ class PrintJob extends Model
     /** @return HasOne<CallbackOutbox, $this> */
     public function outbox(): HasOne
     {
-        return $this->hasOne(CallbackOutbox::class, 'job_id');
+        return $this->hasOne(CallbackOutbox::class, 'job_id')->ofMany('job_run', 'max');
+    }
+
+    /** @return HasMany<CallbackOutbox, $this> */
+    public function outboxes(): HasMany
+    {
+        return $this->hasMany(CallbackOutbox::class, 'job_id');
+    }
+
+    /** @return HasMany<PrintJobRetryRequest, $this> */
+    public function retryRequests(): HasMany
+    {
+        return $this->hasMany(PrintJobRetryRequest::class, 'job_id');
+    }
+
+    /** @return HasOne<PrintJobRetryRequest, $this> */
+    public function latestRetryRequest(): HasOne
+    {
+        return $this->hasOne(PrintJobRetryRequest::class, 'job_id')->latestOfMany();
     }
 }

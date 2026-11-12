@@ -8,6 +8,7 @@ use App\Domain\Jobs\Enums\PrintJobState;
 use App\Domain\Jobs\Models\PrintJob;
 use App\Domain\Jobs\Models\PrintJobAttempt;
 use App\Domain\Jobs\Models\PrintJobEvent;
+use App\Domain\Sources\Enums\SourceIdentityStatus;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
@@ -37,6 +38,11 @@ final class JobClaimRepository
                 $jobQuery = PrintJob::query()
                     ->where('printer_id', $printer->getKey())
                     ->where('state', PrintJobState::Queued)
+                    ->whereHas('binding', fn (Builder $query): Builder => $query
+                        ->where('is_active', true)
+                        ->whereHas('sourceConnection', fn (Builder $query): Builder => $query
+                            ->where('is_active', true)
+                            ->where('identity_status', SourceIdentityStatus::Verified->value)))
                     ->where('available_at', '<=', now())
                     ->orderBy('received_at');
 

@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Printers;
 
+use App\Domain\Fleet\Models\Agent;
 use App\Domain\Fleet\Models\Printer;
 use App\Domain\Fleet\Services\PrinterControlService;
 use App\Domain\Tenancy\Models\Tenant;
@@ -10,8 +11,10 @@ use App\Filament\Resources\Printers\Pages\EditPrinter;
 use App\Filament\Resources\Printers\Pages\ListPrinters;
 use App\Filament\Resources\Tenants\TenantResource;
 use App\Models\User;
+use App\Support\DateTimeDisplay;
 use BackedEnum;
 use Filament\Actions\Action;
+use Filament\Actions\ActionGroup;
 use Filament\Actions\EditAction;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\Select;
@@ -27,6 +30,7 @@ use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 
 final class PrinterResource extends Resource
@@ -130,8 +134,10 @@ final class PrinterResource extends Resource
                     ->label('Agent')
                     ->description(fn (Printer $record): string => $record->agent->site->name)
                     ->searchable(),
-                TextColumn::make('status')
-                    ->label('Status')
+                TextColumn::make('effective_status')
+                    ->label('Availability')
+                    ->formatStateUsing(fn (string $state): string => self::statusLabel($state))
+                    ->description(fn (Printer $record): string => self::lastReportDescription($record))
                     ->badge()
                     ->color(fn (string $state): string => self::statusColor($state)),
                 TextColumn::make('queue_length')
@@ -153,7 +159,7 @@ final class PrinterResource extends Resource
                     ->color('gray'),
                 TextColumn::make('last_seen_at')
                     ->label('Last seen')
-                    ->since(fn (): string => self::tenantTimezone())
+                    ->formatStateUsing(fn (mixed $state): string => DateTimeDisplay::relativeWithClock($state, self::tenantTimezone()))
                     ->placeholder('Never')
                     ->sortable()
                     ->toggleable(),
@@ -164,35 +170,50 @@ final class PrinterResource extends Resource
                     ->relationship('agent', 'hostname')
                     ->searchable()
                     ->preload(),
-                SelectFilter::make('status')
+                SelectFilter::make('effective_status')
+                    ->label('Availability')
                     ->options([
                         'READY' => 'Ready',
                         'ONLINE' => 'Online',
                         'OFFLINE' => 'Offline',
                         'PAPER_OUT' => 'Paper out',
                         'ERROR' => 'Error',
-                    ]),
+                        'AGENT_STALE' => 'Agent stale',
+                        'AGENT_OFFLINE' => 'Agent offline',
+                        'AGENT_REVOKED' => 'Agent revoked',
+                    ])
+                    ->query(fn (Builder $query, array $data): Builder => self::applyAvailabilityFilter(
+                        $query,
+                        isset($data['value']) ? (string) $data['value'] : null,
+                    )),
                 TernaryFilter::make('is_active')->label('Active printer'),
                 TernaryFilter::make('is_paused')->label('Paused queue'),
             ])
             ->defaultSort('windows_name')
             ->poll('10s')
             ->recordActions([
-                Action::make('togglePause')
-                    ->label(fn (Printer $record): string => $record->is_paused ? 'Resume' : 'Pause')
-                    ->icon(fn (Printer $record): Heroicon => $record->is_paused ? Heroicon::OutlinedPlay : Heroicon::OutlinedPause)
-                    ->color(fn (Printer $record): string => $record->is_paused ? 'success' : 'warning')
-                    ->visible(fn (): bool => self::canOperateFleet())
-                    ->requiresConfirmation()
-                    ->action(function (Printer $record, PrinterControlService $printers): void {
-                        $updated = $printers->setPaused($record, ! $record->is_paused);
+                ActionGroup::make([
+                    Action::make('togglePause')
+                        ->label(fn (Printer $record): string => $record->is_paused ? 'Resume' : 'Pause')
+                        ->icon(fn (Printer $record): Heroicon => $record->is_paused ? Heroicon::OutlinedPlay : Heroicon::OutlinedPause)
+                        ->color(fn (Printer $record): string => $record->is_paused ? 'success' : 'warning')
+                        ->visible(fn (): bool => self::canOperateFleet())
+                        ->requiresConfirmation()
+                        ->action(function (Printer $record, PrinterControlService $printers): void {
+                            $updated = $printers->setPaused($record, ! $record->is_paused);
 
-                        Notification::make()
-                            ->title($updated->is_paused ? 'Printer queue paused' : 'Printer queue resumed')
-                            ->success()
-                            ->send();
-                    }),
-                EditAction::make(),
+                            Notification::make()
+                                ->title($updated->is_paused ? 'Printer queue paused' : 'Printer queue resumed')
+                                ->success()
+                                ->send();
+                        }),
+                    EditAction::make(),
+                ])
+                    ->label('Actions')
+                    ->icon(Heroicon::OutlinedEllipsisVertical)
+                    ->color('gray')
+                    ->button()
+                    ->dropdownAutoPlacement(),
             ])
             ->emptyStateHeading('No printers detected')
             ->emptyStateDescription('Printers appear automatically after the Agent sends a heartbeat.')
@@ -237,10 +258,66 @@ final class PrinterResource extends Resource
     {
         return match ($status) {
             'READY', 'ONLINE', 'IDLE' => 'success',
-            'PAPER_OUT', 'OFFLINE', 'ERROR' => 'danger',
-            'PAUSED' => 'warning',
+            'AGENT_STALE', 'PAUSED' => 'warning',
+            'PAPER_OUT', 'OFFLINE', 'ERROR', 'AGENT_OFFLINE', 'AGENT_REVOKED' => 'danger',
             default => 'gray',
         };
+    }
+
+    private static function statusLabel(string $status): string
+    {
+        return match ($status) {
+            'AGENT_STALE' => 'Agent stale',
+            'AGENT_OFFLINE' => 'Agent offline',
+            'AGENT_REVOKED' => 'Agent revoked',
+            'PAPER_OUT' => 'Paper out',
+            default => str($status)->replace('_', ' ')->title()->toString(),
+        };
+    }
+
+    private static function lastReportDescription(Printer $printer): string
+    {
+        $reportedAt = $printer->last_seen_at === null
+            ? 'never'
+            : DateTimeDisplay::relativeWithClock($printer->last_seen_at, self::tenantTimezone());
+
+        return 'Last report: '.self::statusLabel($printer->status).' · '.$reportedAt;
+    }
+
+    /**
+     * @param  Builder<Printer>  $query
+     * @return Builder<Printer>
+     */
+    private static function applyAvailabilityFilter(Builder $query, ?string $status): Builder
+    {
+        if ($status === null || $status === '') {
+            return $query;
+        }
+
+        if (str_starts_with($status, 'AGENT_')) {
+            return $query->whereHas('agent', function (Builder $query) use ($status): void {
+                match ($status) {
+                    'AGENT_REVOKED' => $query->whereNotNull('revoked_at'),
+                    'AGENT_STALE' => $query
+                        ->whereNull('revoked_at')
+                        ->whereBetween('last_seen_at', [
+                            now()->subSeconds(Agent::OFFLINE_THRESHOLD_SECONDS),
+                            now()->subSeconds(Agent::ONLINE_THRESHOLD_SECONDS),
+                        ]),
+                    default => $query
+                        ->whereNull('revoked_at')
+                        ->where(fn (Builder $query) => $query
+                            ->whereNull('last_seen_at')
+                            ->orWhere('last_seen_at', '<', now()->subSeconds(Agent::OFFLINE_THRESHOLD_SECONDS))),
+                };
+            });
+        }
+
+        return $query
+            ->where('status', $status)
+            ->whereHas('agent', fn (Builder $query): Builder => $query
+                ->whereNull('revoked_at')
+                ->where('last_seen_at', '>', now()->subSeconds(Agent::ONLINE_THRESHOLD_SECONDS)));
     }
 
     private static function tenantTimezone(): string

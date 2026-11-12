@@ -146,6 +146,34 @@ paths:
         '403':
           description: Signature salah atau kedaluwarsa
 
+  /updates/{deployment_id}/package:
+    get:
+      summary: Unduh MSI terverifikasi lewat URL sementara dari perintah update
+      security: []
+      parameters:
+        - name: deployment_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: signature
+          in: query
+          required: true
+          schema: { type: string }
+        - name: expires
+          in: query
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: MSI; Agent wajib mencocokkan ukuran, SHA-256, dan signature release sebelum instalasi
+          content:
+            application/x-msi:
+              schema: { type: string, format: binary }
+        '403':
+          description: Signature URL salah atau kedaluwarsa
+        '404':
+          description: Deployment dibatalkan, release tidak aktif, atau paket tidak tersedia
+
   /commands/{command_id}/result:
     post:
       summary: Laporkan hasil perintah dari heartbeat
@@ -256,6 +284,22 @@ components:
         printers:
           type: array
           items: { $ref: '#/components/schemas/PrinterReport' }
+        update:
+          description: Status lifecycle OTA yang sedang aktif; opsional agar Agent lama tetap kompatibel
+          $ref: '#/components/schemas/UpdateLifecycle'
+
+    UpdateLifecycle:
+      type: object
+      required: [command_id, status]
+      properties:
+        command_id: { type: string, format: uuid }
+        target_version: { type: string, example: 0.3.10 }
+        status:
+          type: string
+          enum: [downloading, ready, waiting_for_idle, installing, failed]
+        progress_percent: { type: integer, minimum: 0, maximum: 100 }
+        message: { type: [string, 'null'] }
+        updated_at: { type: string, format: date-time }
 
     HeartbeatResponse:
       type: object
@@ -275,6 +319,12 @@ components:
       properties:
         claim_interval_s: { type: integer, default: 5 }
         heartbeat_interval_s: { type: integer, default: 30 }
+        source_poll_interval_s:
+          type: [integer, 'null']
+          minimum: 1
+          description: >-
+            Informational interval used by the Hub to pull documents from opsifin-main
+            for this Agent's active sources. The Agent must not use it for scheduling.
         log_level: { type: string, enum: [debug, info, warning, error] }
         printers:
           type: array
@@ -306,7 +356,12 @@ components:
         args:
           type: object
           description: |
-            update: { url, sha256, signature, version }
+            update legacy: { url, sha256, signature: authenticode, version, install_policy, release_notes }
+            update internal: { url, sha256, size_bytes, signature_scheme, signature, signing_key_id,
+              channel, version, install_policy, release_notes }
+            signature_scheme internal saat ini: opsigo-rsa-sha256-v1. Field baru bersifat opsional
+            agar Agent sebelum bridge tetap kompatibel dengan command legacy.
+            install_policy: manual | automatic. Automatic tetap menunggu antrean/cetak aktif selesai.
             test_page: { printer_id }
             upload_logs: { hours }
             rotate_secret: { new_secret } — secret lama berlaku 10 menit setelah secret baru dipakai
@@ -319,6 +374,7 @@ components:
         attempt_id: { type: string, format: uuid }
         printer_id: { type: string, format: uuid }
         lease_until: { type: string, format: date-time }
+        display: { $ref: '#/components/schemas/JobDisplay' }
         document:
           type: object
           required: [url, sha256, pages, size_bytes]
@@ -328,6 +384,16 @@ components:
             pages: { type: integer }
             size_bytes: { type: integer }
         print: { $ref: '#/components/schemas/PrintSettings' }
+
+    JobDisplay:
+      type: object
+      required: [invoice_no, item_type]
+      properties:
+        invoice_no: { type: string, maxLength: 100 }
+        item_type: { type: string, maxLength: 50 }
+        received_at:
+          type: [string, 'null']
+          format: date-time
 
     JobEvent:
       type: object

@@ -2,7 +2,9 @@
 
 namespace App\Console\Commands;
 
+use App\Domain\Sources\Enums\SourceIdentityStatus;
 use App\Domain\Sources\Models\PrinterBinding;
+use App\Domain\Sources\Services\SourcePullGuard;
 use App\Domain\Sources\Services\SourcePullService;
 use App\Domain\Tenancy\Services\TenantContext;
 use Illuminate\Console\Command;
@@ -14,11 +16,21 @@ final class PullSourcesCommand extends Command
 
     protected $description = 'Pull due print queues from all active sources';
 
-    public function handle(TenantContext $context, SourcePullService $service): int
-    {
+    public function handle(
+        TenantContext $context,
+        SourcePullGuard $guard,
+        SourcePullService $service,
+    ): int {
         $query = PrinterBinding::withoutGlobalScopes()
             ->where('is_active', true)
             ->whereHas('tenant', fn ($query) => $query->where('status', 'active'))
+            ->whereHas('sourceConnection', fn ($query) => $query
+                // Scheduler belum memiliki TenantContext saat mencari kandidat. Scope
+                // dilepas hanya pada subquery ini dan tenant tetap dicocokkan eksplisit.
+                ->withoutGlobalScope('tenant')
+                ->whereColumn('source_connections.tenant_id', 'printer_bindings.tenant_id')
+                ->where('is_active', true)
+                ->where('identity_status', SourceIdentityStatus::Verified->value))
             ->where(function ($query): void {
                 $query->whereNull('next_pull_at')->orWhere('next_pull_at', '<=', now());
             });
@@ -34,6 +46,12 @@ final class PullSourcesCommand extends Command
             $context->set($binding->tenant_id);
 
             try {
+                // Endpoint legacy mengembalikan kembali status Process. Selama batch binding
+                // masih aktif, pull ulang hanya menambah duplicate dan log tanpa menambah throughput.
+                if ($guard->shouldDefer($binding)) {
+                    continue;
+                }
+
                 foreach ($service->pull($binding) as $key => $count) {
                     $totals[$key] += $count;
                 }

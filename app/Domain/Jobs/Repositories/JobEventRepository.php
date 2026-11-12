@@ -149,10 +149,15 @@ final class JobEventRepository
         $errorCode = (string) ($data['error_code'] ?? 'UNKNOWN');
         $permanent = in_array($errorCode, config('print_hub.permanent_print_errors'), true);
         $attemptExhausted = $job->attempt_count >= config('print_hub.max_print_attempts');
+        $mayHavePrinted = $job->state === PrintJobState::Printing
+            || $attempt->spooler_job_id !== null
+            || $attempt->spooled_at !== null;
 
         $attempt->finished_at = now();
 
-        if ($permanent || $attemptExhausted) {
+        // Setelah job diterima spooler, hasil error bersifat ambigu: kertas mungkin sudah
+        // keluar. Retry otomatis berisiko mencetak invoice yang sama dua kali.
+        if ($permanent || $attemptExhausted || $mayHavePrinted) {
             $job->state = PrintJobState::Failed;
             $job->failure_code = $errorCode;
             $attempt->outcome = 'failed';

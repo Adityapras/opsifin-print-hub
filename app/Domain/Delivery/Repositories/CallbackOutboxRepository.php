@@ -4,6 +4,7 @@ namespace App\Domain\Delivery\Repositories;
 
 use App\Domain\Delivery\Models\CallbackOutbox;
 use App\Domain\Jobs\Models\PrintJob;
+use App\Domain\Sources\Enums\SourceIdentityStatus;
 use App\Domain\Sources\Models\SourceConnection;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -18,7 +19,7 @@ final class CallbackOutboxRepository
         array $payload,
     ): CallbackOutbox {
         return CallbackOutbox::query()->firstOrCreate(
-            ['job_id' => $job->getKey()],
+            ['job_id' => $job->getKey(), 'job_run' => $job->run_number],
             [
                 'source_connection_id' => $connection->getKey(),
                 'endpoint' => $endpoint,
@@ -37,6 +38,9 @@ final class CallbackOutboxRepository
         return CallbackOutbox::query()
             ->with(['job.binding', 'sourceConnection'])
             ->where('status', 'pending')
+            ->whereHas('sourceConnection', fn ($query) => $query
+                ->where('is_active', true)
+                ->where('identity_status', SourceIdentityStatus::Verified->value))
             ->where('next_attempt_at', '<=', now())
             ->orderBy('next_attempt_at')
             ->limit($limit)

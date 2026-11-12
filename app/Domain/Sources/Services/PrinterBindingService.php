@@ -3,6 +3,7 @@
 namespace App\Domain\Sources\Services;
 
 use App\Domain\Fleet\Models\Printer;
+use App\Domain\Sources\Enums\SourceIdentityStatus;
 use App\Domain\Sources\Exceptions\PrinterBindingSyncException;
 use App\Domain\Sources\Models\PrinterBinding;
 use App\Domain\Sources\Models\SourceConnection;
@@ -29,6 +30,7 @@ final class PrinterBindingService
         $binding->fill($attributes);
 
         $connection = SourceConnection::query()->findOrFail($binding->source_connection_id);
+        $this->ensureIdentityVerified($connection);
         $printer = Printer::query()->findOrFail($binding->printer_id);
         $alias = $this->printerAlias($printer);
 
@@ -56,6 +58,11 @@ final class PrinterBindingService
 
         $binding->fill($attributes);
 
+        if ($binding->is_active || $binding->isDirty(self::SYNC_FIELDS)) {
+            $connection = SourceConnection::query()->findOrFail($binding->source_connection_id);
+            $this->ensureIdentityVerified($connection);
+        }
+
         if ($binding->isDirty(self::SYNC_FIELDS)) {
             $connection = SourceConnection::query()->findOrFail($binding->source_connection_id);
             $printer = Printer::query()->findOrFail($binding->printer_id);
@@ -78,6 +85,7 @@ final class PrinterBindingService
     public function syncExisting(PrinterBinding $binding): void
     {
         $binding->loadMissing(['sourceConnection', 'printer']);
+        $this->ensureIdentityVerified($binding->sourceConnection);
         $alias = $this->printerAlias($binding->printer);
 
         // Nama lama disamakan agar endpoint legacy melakukan upsert tanpa membuat log rename palsu.
@@ -159,5 +167,14 @@ final class PrinterBindingService
     private function printerAlias(Printer $printer): string
     {
         return filled($printer->alias) ? (string) $printer->alias : $printer->windows_name;
+    }
+
+    private function ensureIdentityVerified(SourceConnection $connection): void
+    {
+        if ($connection->identity_status !== SourceIdentityStatus::Verified) {
+            throw new PrinterBindingSyncException(
+                'Verify the Opsifin Integration Identity before creating, activating, or synchronizing a binding.',
+            );
+        }
     }
 }

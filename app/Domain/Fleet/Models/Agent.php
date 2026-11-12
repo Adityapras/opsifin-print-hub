@@ -26,6 +26,10 @@ class Agent extends Model
     use BelongsToTenant;
     use HasUuids;
 
+    public const ONLINE_THRESHOLD_SECONDS = 90;
+
+    public const OFFLINE_THRESHOLD_SECONDS = 180;
+
     protected $fillable = [
         'site_id',
         'hostname',
@@ -77,6 +81,12 @@ class Agent extends Model
         return $this->hasMany(AgentCommand::class);
     }
 
+    /** @return HasMany<AgentUpdateDeployment, $this> */
+    public function updateDeployments(): HasMany
+    {
+        return $this->hasMany(AgentUpdateDeployment::class);
+    }
+
     public function getPresenceStatusAttribute(): string
     {
         if ($this->revoked_at !== null) {
@@ -87,11 +97,11 @@ class Agent extends Model
             return 'offline';
         }
 
-        if ($this->last_seen_at->greaterThan(now()->subSeconds(90))) {
+        if ($this->last_seen_at->greaterThan(now()->subSeconds(self::ONLINE_THRESHOLD_SECONDS))) {
             return 'online';
         }
 
-        if ($this->last_seen_at->greaterThanOrEqualTo(now()->subSeconds(180))) {
+        if ($this->last_seen_at->greaterThanOrEqualTo(now()->subSeconds(self::OFFLINE_THRESHOLD_SECONDS))) {
             return 'stale';
         }
 

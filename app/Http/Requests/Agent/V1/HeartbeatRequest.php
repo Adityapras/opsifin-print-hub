@@ -29,6 +29,16 @@ class HeartbeatRequest extends AgentApiRequest
             ],
             'printers.*.raw_status' => ['sometimes', 'nullable', 'integer', 'min:0'],
             'printers.*.queue_length' => ['sometimes', 'integer', 'min:0'],
+            'update' => ['sometimes', 'nullable', 'array'],
+            'update.command_id' => ['required_with:update', 'uuid'],
+            'update.target_version' => ['sometimes', 'string', 'max:50'],
+            'update.status' => [
+                'required_with:update',
+                Rule::in(['downloading', 'ready', 'waiting_for_idle', 'installing', 'failed']),
+            ],
+            'update.progress_percent' => ['sometimes', 'integer', 'between:0,100'],
+            'update.message' => ['sometimes', 'nullable', 'string', 'max:2000'],
+            'update.updated_at' => ['sometimes', 'date'],
         ];
     }
 }

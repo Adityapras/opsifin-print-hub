@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
  * @property string $job_id
+ * @property int $job_run
  * @property string $source_connection_id
  * @property string $endpoint
  * @property array<string, mixed> $payload
@@ -29,6 +30,7 @@ class CallbackOutbox extends Model
 
     protected $fillable = [
         'job_id',
+        'job_run',
         'source_connection_id',
         'endpoint',
         'payload',
@@ -45,6 +47,7 @@ class CallbackOutbox extends Model
     {
         return [
             'payload' => 'array',
+            'job_run' => 'integer',
             'attempts' => 'integer',
             'last_http_status' => 'integer',
             'next_attempt_at' => 'immutable_datetime',

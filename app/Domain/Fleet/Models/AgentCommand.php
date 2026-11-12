@@ -6,6 +6,7 @@ use App\Domain\Tenancy\Concerns\BelongsToTenant;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 /**
  * @property string $type
@@ -42,5 +43,11 @@ class AgentCommand extends Model
     public function agent(): BelongsTo
     {
         return $this->belongsTo(Agent::class);
+    }
+
+    /** @return HasOne<AgentUpdateDeployment, $this> */
+    public function updateDeployment(): HasOne
+    {
+        return $this->hasOne(AgentUpdateDeployment::class);
     }
 }

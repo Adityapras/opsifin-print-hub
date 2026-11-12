@@ -42,6 +42,13 @@ final class PlatformSettings extends Page
                     TextEntry::make('agent_api')->label('Agent API')->state('/agent/v1')->fontFamily('mono')->copyable(),
                     TextEntry::make('storage_time')->label('Stored time standard')->state('UTC · DATETIME(6)'),
                     TextEntry::make('queue')->label('Queue connection')->state(fn (): string => (string) config('queue.default')),
+                    TextEntry::make('horizon')
+                        ->label('Queue dashboard')
+                        ->state('Open Horizon')
+                        ->url(url('/horizon'))
+                        ->openUrlInNewTab()
+                        ->icon(Heroicon::OutlinedArrowTopRightOnSquare)
+                        ->color('primary'),
                     TextEntry::make('environment')->label('Environment')->state(fn (): string => (string) app()->environment())->badge()->color('gray'),
                 ])
                 ->columns(2),

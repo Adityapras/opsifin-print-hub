@@ -54,6 +54,7 @@ function fleetFixture(string $code = 'fleet'): array
             'alias' => 'Kasir '.$code,
             'status' => 'READY',
             'is_active' => true,
+            'last_seen_at' => now(),
         ]);
     } finally {
         $context->clear();
@@ -102,6 +103,47 @@ it('menghitung status agent dari umur heartbeat terakhir', function () {
 
     $agent->forceFill(['revoked_at' => now()])->save();
     expect($agent->fresh()->presence_status)->toBe('revoked');
+});
+
+it('menurunkan availability printer ketika sumber heartbeat agent kedaluwarsa', function () {
+    $fleet = fleetFixture('fleet-printer-presence');
+    $agent = $fleet['agent'];
+    $printer = $fleet['printer'];
+    $context = app(TenantContext::class);
+    $context->set($fleet['tenant']->getKey());
+
+    try {
+        expect($printer->fresh()->effective_status)->toBe('READY');
+        expect(Printer::query()->withEffectiveIssue()->count())->toBe(0);
+
+        $agent->forceFill(['last_seen_at' => now()->subSeconds(120)])->save();
+        expect($printer->fresh()->effective_status)->toBe('AGENT_STALE')
+            ->and(Printer::query()->withEffectiveIssue()->count())->toBe(1);
+
+        $agent->forceFill(['last_seen_at' => now()->subMinutes(9)])->save();
+        expect($printer->fresh()->effective_status)->toBe('AGENT_OFFLINE')
+            ->and($printer->fresh()->status)->toBe('READY');
+    } finally {
+        $context->clear();
+    }
+
+    $admin = User::factory()->create();
+    grantFleetMembership($admin, $fleet['tenant'], 'tenant_admin');
+
+    $this->actingAs($admin)
+        ->get('/admin/tenants/fleet-printer-presence/printers')
+        ->assertOk()
+        ->assertSee('Agent offline')
+        ->assertSee('Last report: Ready');
+
+    $context->set($fleet['tenant']->getKey());
+
+    try {
+        $agent->forceFill(['revoked_at' => now()])->save();
+        expect($printer->fresh()->effective_status)->toBe('AGENT_REVOKED');
+    } finally {
+        $context->clear();
+    }
 });
 
 it('mencabut akses agent dan hanya menghapus agent tanpa printer', function () {

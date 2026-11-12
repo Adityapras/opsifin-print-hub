@@ -10,5 +10,6 @@ final readonly class SourceConnectionTestResult
         public string $message,
         public ?int $httpStatus,
         public int $durationMs,
+        public ?string $remoteIntegrationId = null,
     ) {}
 }

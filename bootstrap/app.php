@@ -2,8 +2,10 @@
 
 use App\Console\Commands\BootstrapAgentSiteCommand;
 use App\Console\Commands\GrantTenantUserCommand;
+use App\Console\Commands\ImportAgentReleaseCommand;
 use App\Console\Commands\ProcessCallbacksCommand;
 use App\Console\Commands\PullSourcesCommand;
+use App\Console\Commands\ReconcileAgentUpdatesCommand;
 use App\Http\Middleware\AuthenticateAgent;
 use App\Http\Middleware\EnsureAgentVersionIsSupported;
 use Illuminate\Foundation\Application;
@@ -22,8 +24,10 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withCommands([
         BootstrapAgentSiteCommand::class,
         GrantTenantUserCommand::class,
+        ImportAgentReleaseCommand::class,
         PullSourcesCommand::class,
         ProcessCallbacksCommand::class,
+        ReconcileAgentUpdatesCommand::class,
     ])
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([

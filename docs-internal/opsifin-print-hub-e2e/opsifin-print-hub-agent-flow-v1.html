@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Alur Opsifin Print Hub sampai Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+  <style>
+    :root {
+      color-scheme: light;
+      --bg:#f2f5f7; --panel:#fff; --panel-2:#eaf0f4; --ink:#182632; --muted:#5c6b78; --line:#d5dde4;
+      --head:#101820; --head-2:#18242e; --head-fg:#f2f6f8; --head-muted:#9aabb8;
+      --source:#2d66b0; --source-soft:#e1ebf8; --hub:#cf620e; --hub-soft:#fce9d8; --agent:#087b67; --agent-soft:#daf2eb;
+      --spool:#7048a8; --spool-soft:#ebe3f7; --printer:#95710f; --printer-soft:#f6edd2; --danger:#bc3434; --danger-soft:#fae3e1;
+      --success:#167443; --success-soft:#dff1e5; --warn:#b16a0b; --warn-soft:#f7ebd5; --slate:#607181; --slate-soft:#e5ebef;
+      --display:"Bricolage Grotesque","Plus Jakarta Sans",sans-serif;
+      --body:"Plus Jakarta Sans","Segoe UI",sans-serif;
+      --mono:"JetBrains Mono",Consolas,monospace;
+    }
+    @media (prefers-color-scheme:dark) { :root:not([data-theme="light"]) {
+      color-scheme:dark; --bg:#0f161c; --panel:#18222b; --panel-2:#222e38; --ink:#e8eef2; --muted:#9fadb8; --line:#303e49;
+      --head:#0a1015; --head-2:#111b23; --head-fg:#eef4f7; --head-muted:#8f9eaa;
+      --source:#78a9e9; --source-soft:#192d46; --hub:#f39a4f; --hub-soft:#3c2817; --agent:#51cdb2; --agent-soft:#12372f;
+      --spool:#b79ae2; --spool-soft:#2b2340; --printer:#dfbd5c; --printer-soft:#352d16; --danger:#ef8e88; --danger-soft:#3d201f;
+      --success:#67d193; --success-soft:#173722; --warn:#e3aa57; --warn-soft:#382b18; --slate:#abb9c5; --slate-soft:#27323b;
+    } }
+    :root[data-theme="dark"] {
+      color-scheme:dark; --bg:#0f161c; --panel:#18222b; --panel-2:#222e38; --ink:#e8eef2; --muted:#9fadb8; --line:#303e49;
+      --head:#0a1015; --head-2:#111b23; --head-fg:#eef4f7; --head-muted:#8f9eaa;
+      --source:#78a9e9; --source-soft:#192d46; --hub:#f39a4f; --hub-soft:#3c2817; --agent:#51cdb2; --agent-soft:#12372f;
+      --spool:#b79ae2; --spool-soft:#2b2340; --printer:#dfbd5c; --printer-soft:#352d16; --danger:#ef8e88; --danger-soft:#3d201f;
+      --success:#67d193; --success-soft:#173722; --warn:#e3aa57; --warn-soft:#382b18; --slate:#abb9c5; --slate-soft:#27323b;
+    }
+    *{box-sizing:border-box} html{scroll-behavior:smooth;scroll-padding-top:50px} body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.65 var(--body)}
+    h1,h2,h3,h4,p{margin:0} h1,h2{font-family:var(--display);letter-spacing:-.02em;text-wrap:balance} button,input,select{font:inherit;color:inherit}
+    button{cursor:pointer} code,.mono{font-family:var(--mono);font-size:.9em} code{background:var(--panel-2);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+    :focus-visible{outline:2px solid var(--hub);outline-offset:2px}.wrap{max-width:1160px;margin:auto}.gutter{padding-inline:max(18px,env(safe-area-inset-left))}
+    .hero{position:relative;overflow:hidden;background:var(--head);color:var(--head-fg);padding:42px 0 36px}
+    .hero:after{content:"";position:absolute;inset:-60% -10% auto 52%;height:420px;background:radial-gradient(circle,rgba(207,98,14,.22),transparent 68%);pointer-events:none}
+    .hero-grid{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:32px;align-items:end;position:relative;z-index:1}.crumb{color:var(--head-muted);font-size:12px;font-weight:700;letter-spacing:.04em}
+    h1{font-size:clamp(38px,6vw,62px);line-height:1.02;margin-top:8px;max-width:850px}.lede{max-width:74ch;margin-top:14px;font-size:16px;color:#dfe7ec}
+    .hero-state{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:20px;color:var(--head-muted);font-size:12.5px}.hero-state b{color:var(--head-fg)}
+    .pulse{display:inline-block;width:9px;height:9px;margin-right:8px;border-radius:50%;background:var(--hub);box-shadow:0 0 0 5px rgba(207,98,14,.13)}
+    .hero-metrics{display:grid;grid-template-columns:repeat(2,112px);border:1px solid #31404c;border-radius:10px;overflow:hidden;background:rgba(255,255,255,.025)}
+    .hero-metrics div{padding:13px 15px;border:1px solid #283642;margin:-1px 0 0 -1px}.hero-metrics b{display:block;font:700 21px/1 var(--mono);color:#fff}.hero-metrics span{font-size:10.5px;color:var(--head-muted)}
+    .theme{position:absolute;right:18px;top:18px;z-index:2;border:1px solid #34434f;background:#18242e;color:#dfe7ec;border-radius:99px;padding:7px 11px;font-size:11px;font-weight:700}
+    .chapters{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--panel) 94%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+    .chapters ol{list-style:none;margin:0 auto;padding:0;display:flex;max-width:1160px;overflow-x:auto;scrollbar-width:thin}.chapters a{display:block;white-space:nowrap;padding:11px 10px;color:var(--muted);font-size:12px;font-weight:700;text-decoration:none;border-bottom:2px solid transparent}.chapters a.on{color:var(--hub);border-color:var(--hub)}
+    main{padding:8px 0 56px}section{padding:38px 0 8px;scroll-margin-top:48px}.sec-head{max-width:76ch;margin-bottom:18px}.sec-head h2{font-size:clamp(27px,3.6vw,36px);line-height:1.1}.sec-head p{margin-top:8px;color:var(--muted)}
+    .box{background:var(--panel);border:1px solid var(--line);border-radius:11px}.pad{padding:18px}.stack{display:grid;gap:14px}.small{font-size:12.5px}.muted{color:var(--muted)}.eyebrow{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+    .scroll-x{overflow-x:auto}.tag{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:99px;font-size:10.5px;font-weight:800}.t-source{color:var(--source);background:var(--source-soft)}.t-hub{color:var(--hub);background:var(--hub-soft)}.t-agent{color:var(--agent);background:var(--agent-soft)}.t-spool{color:var(--spool);background:var(--spool-soft)}.t-danger{color:var(--danger);background:var(--danger-soft)}
+    .terms{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));overflow:hidden}.terms>div{padding:14px 16px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}.terms dt{font-weight:800}.terms dd{margin:3px 0 0;color:var(--muted);font-size:12.5px}
+    .system-shell{overflow:hidden}.system-map{display:block;width:100%;min-width:900px;height:auto;background:linear-gradient(180deg,color-mix(in srgb,var(--panel-2) 45%,transparent),transparent)}
+    .sys-node{cursor:pointer;outline:none}.sys-node rect{stroke-width:2;transition:.18s}.sys-node:hover rect,.sys-node.on rect{stroke-width:4;filter:drop-shadow(0 5px 10px rgba(0,0,0,.12))}.sys-node text{font-family:var(--body);fill:var(--ink)}.sys-node .nm{font-weight:800;font-size:15px}.sys-node .sub{font-size:10.5px;fill:var(--muted)}
+    .n-source rect{fill:var(--source-soft);stroke:var(--source)}.n-hub rect{fill:var(--hub-soft);stroke:var(--hub)}.n-agent rect{fill:var(--agent-soft);stroke:var(--agent)}.n-spool rect{fill:var(--spool-soft);stroke:var(--spool)}.n-printer rect{fill:var(--printer-soft);stroke:var(--printer)}
+    .edge{stroke:var(--muted);stroke-width:2;fill:none}.edge.dash{stroke-dasharray:7 5}.edge-label{font:700 10.5px var(--body);fill:var(--muted)}.sys-detail{display:grid;grid-template-columns:1.1fr .9fr;gap:18px;padding:18px;border-top:1px solid var(--line)}.sys-detail h3{font:800 22px var(--display)}.chips{display:flex;flex-wrap:wrap;gap:6px}.chip{padding:3px 8px;border-radius:99px;background:var(--panel-2);font-size:11px;font-weight:700}.chip.ok{background:var(--success-soft);color:var(--success)}.chip.no{background:var(--danger-soft);color:var(--danger)}
+    .responsibility{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:14px}.responsibility .box{padding:15px;border-top:4px solid}.responsibility h3{font:800 18px var(--display);margin-bottom:7px}.responsibility ul{margin:0;padding-left:18px;color:var(--muted);font-size:12.5px}.responsibility .source{border-top-color:var(--source)}.responsibility .hub{border-top-color:var(--hub)}.responsibility .agent{border-top-color:var(--agent)}
+    .onboard{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(320px,.75fr);gap:14px}.mini-plane{padding:13px;min-height:390px}.mini-head{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:8px 10px;border-radius:7px;background:var(--head);color:var(--head-fg);font-size:11px}.mini-tree{display:grid;gap:8px;margin-top:10px}.mini-row{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:9px;align-items:center;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);transition:.2s}.mini-row .num{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--panel-2);font:700 11px var(--mono)}.mini-row small{display:block;color:var(--muted)}.mini-row.hit{border-color:var(--hub);box-shadow:0 0 0 2px var(--hub-soft);transform:translateX(4px)}.mini-row.hit .num{background:var(--hub);color:#fff}.mini-row .status{font:700 10px var(--mono);color:var(--muted)}
+    .steps{padding:13px}.steps-list{list-style:none;margin:0;padding:0;display:grid;gap:4px}.step-btn{width:100%;display:grid;grid-template-columns:25px minmax(0,1fr);gap:8px;text-align:left;border:1px solid transparent;background:transparent;border-radius:8px;padding:8px 9px;font-size:12.5px;font-weight:700}.step-btn:hover{background:var(--panel-2)}.step-btn.on{background:var(--hub-soft);border-color:var(--hub)}.step-no{display:grid;place-items:center;width:23px;height:23px;border-radius:50%;background:var(--panel-2);font:700 10px var(--mono)}.step-btn.on .step-no{background:var(--hub);color:#fff}.step-detail{margin-top:11px;padding-top:11px;border-top:1px solid var(--line);font-size:12.5px}.step-detail ul{margin:7px 0 0;padding-left:18px;color:var(--muted)}
+    .chain{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:14px;padding:14px}.chain span{padding:5px 9px;border-radius:5px;background:var(--panel-2);font-size:11.5px;font-weight:800}.chain i{font-style:normal;color:var(--muted)}
+    .state-wrap{overflow:hidden}.state-map{display:block;width:100%;min-width:920px;height:auto}.state-map text{font-family:var(--body);fill:var(--ink)}.state-node{cursor:pointer}.state-node rect{stroke-width:2;transition:.18s}.state-node.on rect,.state-node:hover rect{stroke-width:4}.state-node .nm{font-weight:800;font-size:14px}.state-node .sub{font-size:10px;fill:var(--muted)}.s-neutral rect{fill:var(--slate-soft);stroke:var(--slate)}.s-queue rect{fill:var(--source-soft);stroke:var(--source)}.s-active rect{fill:var(--hub-soft);stroke:var(--hub)}.s-print rect{fill:var(--spool-soft);stroke:var(--spool)}.s-ok rect{fill:var(--success-soft);stroke:var(--success)}.s-fail rect{fill:var(--danger-soft);stroke:var(--danger)}
+    .state-detail{display:grid;grid-template-columns:1.2fr 1fr;gap:18px;border-top:1px solid var(--line);padding:17px}.state-detail h3{font:800 21px var(--display)}.kv{display:grid;grid-template-columns:110px minmax(0,1fr);gap:5px 12px}.kv dt{color:var(--muted)}.kv dd{margin:0;font-weight:600}
+    .cycle{position:relative;overflow:hidden;padding:18px}.lanes{display:grid;grid-template-columns:120px repeat(5,minmax(120px,1fr));border:1px solid var(--line);border-radius:9px;overflow:hidden}.lane-head{padding:9px;border-left:1px solid var(--line);background:var(--panel-2);font-weight:800;font-size:11.5px;text-align:center}.lane-head:first-child{text-align:left;border-left:0}.cycle-row{display:contents}.cycle-step{min-height:75px;padding:10px;border-top:1px solid var(--line);border-left:1px solid var(--line);font-size:11.5px;transition:.2s}.cycle-step:first-child{border-left:0;color:var(--muted);font:700 11px var(--mono)}.cycle-step b{display:block;color:var(--ink);margin-bottom:3px}.cycle-step.active{background:var(--hub-soft);box-shadow:inset 0 0 0 2px var(--hub)}.play{border:1px solid var(--line);background:var(--panel);border-radius:7px;padding:7px 11px;font-size:12px;font-weight:800}.play:hover{border-color:var(--hub);color:var(--hub)}
+    .sim{display:grid;grid-template-columns:290px minmax(0,1fr);gap:14px;align-items:start}.scenario-list{display:grid;gap:6px;padding:12px}.scenario-list button{text-align:left;border:1px solid var(--line);background:var(--panel);padding:9px 10px;border-radius:7px;font-size:12px;font-weight:700}.scenario-list button.on{border-color:var(--hub);background:var(--hub-soft)}
+    .sim-stage{overflow:hidden}.sim-top{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--line)}.metric{padding:13px;border-left:1px solid var(--line)}.metric:first-child{border-left:0}.metric small{display:block;color:var(--muted);font-size:10.5px}.metric b{font:700 13px var(--mono);overflow-wrap:anywhere}.sim-flow{padding:16px;display:flex;align-items:stretch;gap:7px;overflow-x:auto}.sim-node{min-width:115px;flex:1;padding:11px;border:1px solid var(--line);border-radius:8px;text-align:center;font-size:11px;opacity:.42;transition:.2s}.sim-node strong{display:block;margin-bottom:3px}.sim-node.done{opacity:1}.sim-node.current{opacity:1;border-color:var(--hub);box-shadow:0 0 0 2px var(--hub-soft)}.sim-arrow{align-self:center;color:var(--muted);font-weight:800}.event-log{border-top:1px solid var(--line);max-height:295px;overflow:auto}.event{display:grid;grid-template-columns:76px 105px minmax(0,1fr);gap:9px;padding:9px 12px;border-bottom:1px solid var(--line);font-size:11.5px}.event time{font-family:var(--mono);color:var(--muted)}.event .who{font-weight:800}.event.bad{background:var(--danger-soft)}.event.warn{background:var(--warn-soft)}.event.good{background:var(--success-soft)}
+    .sim-note{padding:13px;border-top:1px solid var(--line);font-size:12.5px}.sim-note strong{display:block;margin-bottom:3px}.sim-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.action-pill{padding:4px 8px;border-radius:5px;background:var(--panel-2);font-size:11px;font-weight:800}
+    .heartbeat{display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr);gap:14px}.hb-control{padding:17px}.hb-control input{width:100%;accent-color:var(--hub)}.hb-big{font:800 clamp(42px,7vw,70px)/1 var(--display);margin:14px 0 3px}.hb-track{display:grid;grid-template-columns:90fr 90fr 120fr;height:12px;border-radius:5px;overflow:hidden;margin-top:12px}.hb-track span:nth-child(1){background:var(--success)}.hb-track span:nth-child(2){background:var(--warn)}.hb-track span:nth-child(3){background:var(--danger)}.hb-labels{display:flex;justify-content:space-between;color:var(--muted);font:600 10px var(--mono);margin-top:4px}.hb-result{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;padding:17px}.hb-card{padding:14px;border-radius:8px;background:var(--panel-2)}.hb-card small{display:block;color:var(--muted)}.hb-card b{font:800 20px var(--display)}.hb-explain{grid-column:1/-1;color:var(--muted);font-size:12.5px}
+    table{width:100%;border-collapse:collapse;font-size:12px;min-width:760px}th,td{text-align:left;vertical-align:top;padding:9px 11px;border-bottom:1px solid var(--line)}th{background:var(--panel-2);font-size:11px;color:var(--muted)}tr:last-child td{border-bottom:0}.sev{font-weight:800}.sev.hi{color:var(--danger)}.sev.md{color:var(--warn)}
+    .tenant-demo{display:grid;grid-template-columns:1fr 70px 1fr;gap:12px;align-items:stretch}.tenant{padding:16px}.tenant h3{font:800 21px var(--display)}.tenant.a{border-top:4px solid var(--source)}.tenant.b{border-top:4px solid var(--agent)}.tenant-tree{display:grid;gap:7px;margin-top:12px}.tenant-tree div{padding:8px 10px;border-radius:6px;background:var(--panel-2);font-size:12px}.tenant-tree div+div{margin-left:14px}.tenant-tree div+div+div{margin-left:28px}.barrier{display:grid;place-items:center;text-align:center;color:var(--danger);font-size:10px;font-weight:800}.barrier span{writing-mode:vertical-rl;transform:rotate(180deg);letter-spacing:.08em}.attack{margin-top:14px;padding:14px;display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:center}.attack .req,.attack .res{padding:11px;border-radius:7px;background:var(--panel-2);font-size:12px}.attack .res{background:var(--danger-soft);color:var(--danger);font-weight:800}.attack .arr{font-size:20px;color:var(--danger)}
+    .layers{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.layer{padding:15px;border-radius:9px;border:1px solid var(--line);background:var(--panel)}.layer .n{font:700 11px var(--mono);color:var(--muted)}.layer h3{font:800 18px var(--display);margin:5px 0}.layer ul{margin:0;padding-left:17px;color:var(--muted);font-size:12px}.writes{margin-top:14px;padding:16px}.writes .chain{margin:8px 0 0;padding:0}
+    .qa-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.check-card{display:grid;grid-template-columns:22px minmax(0,1fr);gap:9px;padding:13px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}.check-card input{margin-top:3px;accent-color:var(--agent);width:16px;height:16px}.check-card b{display:block}.check-card span{display:block;color:var(--muted);font-size:11.5px}.qa-progress{display:flex;align-items:center;gap:12px;margin-bottom:13px}.qa-progress .track{height:8px;flex:1;background:var(--panel-2);border-radius:4px;overflow:hidden}.qa-progress i{display:block;height:100%;width:0;background:var(--agent);transition:.2s}.qa-progress b{font:700 12px var(--mono)}
+    .road{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}.mile{position:relative;padding:14px;border:1px solid var(--line);border-radius:8px;background:var(--panel);min-height:135px}.mile:after{content:"";position:absolute;right:-9px;top:31px;width:9px;border-top:2px solid var(--line)}.mile:last-child:after{display:none}.mile .no{font:700 10px var(--mono);color:var(--muted)}.mile h3{font:800 17px var(--display);margin:5px 0}.mile p{font-size:11.5px;color:var(--muted)}.mile.now{border-color:var(--hub);box-shadow:inset 0 4px 0 var(--hub)}
+    .open-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:14px}.open{padding:14px;border-left:4px solid var(--warn)}.open b{display:block}.open p{color:var(--muted);font-size:12px;margin-top:4px}.open em{display:block;color:var(--success);font-style:normal;font-weight:800;margin-top:6px;font-size:11.5px}
+    .foot{margin-top:42px;padding:22px 0;color:var(--muted);border-top:1px solid var(--line);font-size:11.5px}
+    .reveal{animation:rise .55s ease both}@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+    @media(max-width:900px){.hero-grid{grid-template-columns:1fr}.hero-metrics{width:max-content}.responsibility,.layers{grid-template-columns:1fr 1fr}.onboard,.sim,.heartbeat{grid-template-columns:1fr}.sys-detail,.state-detail{grid-template-columns:1fr}.tenant-demo{grid-template-columns:1fr}.barrier span{writing-mode:initial;transform:none}.attack{grid-template-columns:1fr}.attack .arr{transform:rotate(90deg);text-align:center}.road{grid-template-columns:1fr 1fr}.mile:after{display:none}}
+    @media(max-width:600px){h1{font-size:38px}.hero{padding-top:55px}.hero-metrics{grid-template-columns:repeat(2,1fr);width:100%}.responsibility,.layers,.qa-grid,.open-grid,.road{grid-template-columns:1fr}.sim-top{grid-template-columns:1fr 1fr}.metric:nth-child(3){border-left:0;border-top:1px solid var(--line)}.metric:nth-child(4){border-top:1px solid var(--line)}.hb-result{grid-template-columns:1fr}.event{grid-template-columns:64px 84px minmax(0,1fr)}.theme{top:12px}}
+    @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+    @media print{.chapters,.theme,.play{display:none}.hero{background:#fff;color:#000;padding:20px 0}.lede,.hero-state,.crumb{color:#444}.box,.layer,.check-card{break-inside:avoid}body{background:#fff}.sim-node{opacity:1}}
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <button class="theme" id="themeBtn" type="button">Theme</button>
+    <div class="wrap gutter hero-grid">
+      <div>
+        <div class="crumb">OPSIFIN PRINT HUB › TECHNICAL FLOW › HUB TO AGENT</div>
+        <h1>Alur Print Hub sampai Agent</h1>
+        <p class="lede">Satu invoice bergerak melewati lima batas yang berbeda: opsifin-main, Hub, Agent Windows, spooler, dan printer. Halaman ini memperlihatkan siapa melakukan apa, kapan status boleh berubah, serta bagaimana sistem mencegah tenant tertukar dan invoice tercetak dua kali.</p>
+        <div class="hero-state"><span><i class="pulse"></i><b>Posisi 10 Nov 2026:</b> pipeline lokal berjalan sampai printer fisik dan callback.</span><span>QA2, production, load test, dan variasi driver belum diverifikasi.</span></div>
+      </div>
+      <div class="hero-metrics" aria-label="Ringkasan teknis">
+        <div><b>5</b><span>batas sistem</span></div><div><b>11</b><span>langkah cetak</span></div>
+        <div><b>120s</b><span>lease job</span></div><div><b>5m</b><span>signed URL</span></div>
+      </div>
+    </div>
+  </header>
+
+  <nav class="chapters" aria-label="Bab dokumen"><ol id="navList">
+    <li><a href="#peta">Peta sistem</a></li><li><a href="#onboarding">Onboarding</a></li><li><a href="#siklus">Siklus print</a></li>
+    <li><a href="#simulator">Simulator job</a></li><li><a href="#heartbeat">Heartbeat</a></li><li><a href="#failure">Failure & recovery</a></li>
+    <li><a href="#tenant">Tenant safety</a></li><li><a href="#teknis">Di balik layar</a></li><li><a href="#e2e">E2E test</a></li><li><a href="#rilis">Production gate</a></li>
+  </ol></nav>
+
+  <main class="wrap gutter">
+    <section id="peta" class="reveal">
+      <header class="sec-head"><h2>Lima sistem, satu jejak invoice</h2><p>Klik komponen untuk melihat tanggung jawab, data yang dipegang, dan hal yang tidak boleh dilakukannya. Garis solid adalah data utama; garis putus-putus adalah status atau callback.</p></header>
+      <div class="box system-shell scroll-x">
+        <svg class="system-map" viewBox="0 0 1040 330" role="img" aria-label="Peta Opsifin Main, Hub, Agent, Windows Spooler, dan printer">
+          <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="var(--muted)"/></marker></defs>
+          <path class="edge" marker-end="url(#arr)" d="M190 125H275"/><text class="edge-label" x="205" y="112">getData + Link</text>
+          <path class="edge" marker-end="url(#arr)" d="M465 125H550"/><text class="edge-label" x="479" y="112">claim + PDF</text>
+          <path class="edge" marker-end="url(#arr)" d="M735 125H790"/><text class="edge-label" x="742" y="112">GDI</text>
+          <path class="edge" marker-end="url(#arr)" d="M915 125H955"/><text class="edge-label" x="918" y="112">paper</text>
+          <path class="edge dash" marker-end="url(#arr)" d="M550 190C510 265 390 270 360 195"/><text class="edge-label" x="430" y="260">events + heartbeat</text>
+          <path class="edge dash" marker-end="url(#arr)" d="M360 195C340 292 130 288 115 195"/><text class="edge-label" x="205" y="300">Success / Failed callback</text>
+          <g class="sys-node n-source" data-sys="source" tabindex="0"><rect x="25" y="70" width="165" height="125" rx="12"/><text text-anchor="middle"><tspan class="nm" x="108" y="110">opsifin-main</tspan><tspan class="sub" x="108" y="132">source queue</tspan><tspan class="sub" x="108" y="149">render PDF</tspan><tspan class="sub" x="108" y="166">receive callback</tspan></text></g>
+          <g class="sys-node n-hub" data-sys="hub" tabindex="0"><rect x="275" y="45" width="190" height="150" rx="12"/><text text-anchor="middle"><tspan class="nm" x="370" y="87">Print Hub</tspan><tspan class="sub" x="370" y="110">identity + routing</tspan><tspan class="sub" x="370" y="127">snapshot + state machine</tspan><tspan class="sub" x="370" y="144">lease + callback outbox</tspan><tspan class="sub" x="370" y="161">audit + admin</tspan></text></g>
+          <g class="sys-node n-agent" data-sys="agent" tabindex="0"><rect x="550" y="60" width="185" height="135" rx="12"/><text text-anchor="middle"><tspan class="nm" x="642" y="102">Agent Windows</tspan><tspan class="sub" x="642" y="124">inventory + heartbeat</tspan><tspan class="sub" x="642" y="141">download + hash check</tspan><tspan class="sub" x="642" y="158">PDFium + event outbox</tspan></text></g>
+          <g class="sys-node n-spool" data-sys="spooler" tabindex="0"><rect x="790" y="75" width="125" height="120" rx="12"/><text text-anchor="middle"><tspan class="nm" x="852" y="113">Windows</tspan><tspan class="nm" x="852" y="132">Spooler</tspan><tspan class="sub" x="852" y="153">JobId + status</tspan><tspan class="sub" x="852" y="170">queue evidence</tspan></text></g>
+          <g class="sys-node n-printer" data-sys="printer" tabindex="0"><rect x="955" y="87" width="72" height="108" rx="12"/><text text-anchor="middle"><tspan class="nm" x="991" y="125">Printer</tspan><tspan class="sub" x="991" y="147">paper</tspan><tspan class="sub" x="991" y="164">driver</tspan></text></g>
+        </svg>
+        <div class="sys-detail" id="sysDetail"></div>
+      </div>
+      <div class="responsibility">
+        <article class="box source"><h3>opsifin-main menentukan apa</h3><ul><li>Invoice yang siap dicetak.</li><li>Isi dan Link PDF.</li><li>Status bisnis setelah callback.</li></ul></article>
+        <article class="box hub"><h3>Hub menentukan ke mana</h3><ul><li>Tenant, source, binding, dan printer.</li><li>Job state, lease, retry, callback.</li><li>Audit dan bukti snapshot.</li></ul></article>
+        <article class="box agent"><h3>Agent mengerjakan fisik</h3><ul><li>Melihat printer Windows.</li><li>Merender PDF ke GDI.</li><li>Memantau JobId dan mengirim event.</li></ul></article>
+      </div>
+      <dl class="box terms" style="margin-top:14px">
+        <div><dt>Integration ID</dt><dd>UUID publik yang mencocokkan tenant Hub dengan satu opsifin-main.</dd></div>
+        <div><dt>Binding</dt><dd>Route dari identitas printer legacy ke destination printer Hub.</dd></div>
+        <div><dt>Snapshot</dt><dd>PDF kanonis + SHA-256 yang benar-benar dikirim ke Agent.</dd></div>
+        <div><dt>Lease</dt><dd>Hak sementara Agent atas satu job; default 120 detik.</dd></div>
+        <div><dt>Print run</dt><dd>Satu siklus cetak. Manual retry menaikkan nomor run tanpa menghapus histori.</dd></div>
+      </dl>
+    </section>
+
+    <section id="onboarding">
+      <header class="sec-head"><h2>Menghubungkan tenant sampai printer</h2><p>Enam langkah berurutan. Klik langkah untuk menyorot objek control plane yang berubah. Tidak ada binding aktif sebelum identity, Agent, dan destination printer terbukti benar.</p></header>
+      <div class="onboard">
+        <div class="box mini-plane" id="miniPlane">
+          <div class="mini-head"><b>Opsifin Print Hub · Tenant Bravo</b><span class="mono">internal only</span></div>
+          <div class="mini-tree">
+            <div class="mini-row" data-ob="tenant"><span class="num">1</span><div><b>Tenant · Bravo</b><small>integration_id dibuat Hub</small></div><span class="status">ACTIVE</span></div>
+            <div class="mini-row" data-ob="identity"><span class="num">2</span><div><b>Source Connection · Opsifin Bravo</b><small>GET /identity harus cocok</small></div><span class="status">VERIFIED</span></div>
+            <div class="mini-row" data-ob="site"><span class="num">3</span><div><b>Site · Jakarta Office</b><small>lokasi fisik Agent</small></div><span class="status">READY</span></div>
+            <div class="mini-row" data-ob="agent"><span class="num">4</span><div><b>Agent · PC-KASIR-01</b><small>machine_id unik per tenant</small></div><span class="status">ONLINE</span></div>
+            <div class="mini-row" data-ob="printer"><span class="num">5</span><div><b>Printer · EPSON L3110</b><small>Windows name + driver + port</small></div><span class="status">ACTIVE</span></div>
+            <div class="mini-row" data-ob="binding"><span class="num">6</span><div><b>Binding · Invoice TK → EPSON</b><small>source identity + destination printer</small></div><span class="status">INACTIVE</span></div>
+          </div>
+        </div>
+        <aside class="box steps"><ol class="steps-list" id="onboardSteps"></ol><div class="step-detail" id="onboardDetail"></div></aside>
+      </div>
+      <div class="box chain"><span>Tenant UUID</span><i>→</i><span>/identity cocok</span><i>→</i><span>Connection Verified</span><i>→</i><span>Site + Agent Online</span><i>→</i><span>Printer Active</span><i>→</i><span>/printerName sync</span><i>→</i><span>legacy autoprint OFF</span><i>→</i><span>Binding Active</span></div>
+    </section>
+
+    <section id="siklus">
+      <header class="sec-head"><h2>Satu job, tujuh state utama</h2><p>Klik state untuk melihat pemilik transisi dan bukti yang harus ada. Jalur hijau adalah selesai; jalur merah membutuhkan operator atau perbaikan source.</p></header>
+      <div class="box state-wrap scroll-x">
+        <svg class="state-map" viewBox="0 0 1040 300" aria-label="State machine print job">
+          <defs><marker id="sarr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 10 5 0 10z" fill="var(--muted)"/></marker></defs>
+          <path class="edge" marker-end="url(#sarr)" d="M150 118H220"/><text class="edge-label" x="164" y="105">PDF valid</text>
+          <path class="edge" marker-end="url(#sarr)" d="M360 118H430"/><text class="edge-label" x="372" y="105">claim</text>
+          <path class="edge" marker-end="url(#sarr)" d="M570 118H640"/><text class="edge-label" x="582" y="105">spooled</text>
+          <path class="edge" marker-end="url(#sarr)" d="M780 118H850"/><text class="edge-label" x="793" y="105">completed</text>
+          <path class="edge dash" marker-end="url(#sarr)" d="M80 165V220H220"/><text class="edge-label" x="96" y="210">hardcopy=N</text>
+          <path class="edge dash" marker-end="url(#sarr)" d="M290 165V220H430"/><text class="edge-label" x="306" y="210">PDF invalid</text>
+          <path class="edge dash" marker-end="url(#sarr)" d="M710 165V220H640"/><text class="edge-label" x="650" y="210">ambiguous/error</text>
+          <g class="state-node s-neutral" data-state="received"><rect x="20" y="75" width="130" height="90" rx="10"/><text text-anchor="middle"><tspan class="nm" x="85" y="113">Received</tspan><tspan class="sub" x="85" y="135">payload source</tspan></text></g>
+          <g class="state-node s-queue" data-state="queued"><rect x="220" y="75" width="140" height="90" rx="10"/><text text-anchor="middle"><tspan class="nm" x="290" y="113">Queued</tspan><tspan class="sub" x="290" y="135">snapshot ready</tspan></text></g>
+          <g class="state-node s-active" data-state="claimed"><rect x="430" y="75" width="140" height="90" rx="10"/><text text-anchor="middle"><tspan class="nm" x="500" y="113">Claimed</tspan><tspan class="sub" x="500" y="135">lease 120s</tspan></text></g>
+          <g class="state-node s-print" data-state="printing"><rect x="640" y="75" width="140" height="90" rx="10"/><text text-anchor="middle"><tspan class="nm" x="710" y="113">Printing</tspan><tspan class="sub" x="710" y="135">spooler JobId</tspan></text></g>
+          <g class="state-node s-ok" data-state="printed"><rect x="850" y="75" width="160" height="90" rx="10"/><text text-anchor="middle"><tspan class="nm" x="930" y="113">Printed</tspan><tspan class="sub" x="930" y="135">callback Success</tspan></text></g>
+          <g class="state-node s-neutral" data-state="skipped"><rect x="220" y="220" width="140" height="65" rx="10"/><text text-anchor="middle"><tspan class="nm" x="290" y="250">Skipped</tspan><tspan class="sub" x="290" y="269">no hardcopy</tspan></text></g>
+          <g class="state-node s-fail" data-state="failed"><rect x="520" y="220" width="190" height="65" rx="10"/><text text-anchor="middle"><tspan class="nm" x="615" y="250">Failed</tspan><tspan class="sub" x="615" y="269">retry / resolve</tspan></text></g>
+        </svg>
+        <div class="state-detail" id="stateDetail"></div>
+      </div>
+
+      <div class="box cycle" style="margin-top:14px">
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:12px"><div><div class="eyebrow">Happy path · physical printer</div><h3 style="font:800 20px var(--display)">Sebelas langkah dari queue sampai callback</h3></div><button class="play" id="playCycle" type="button">Putar alur</button></div>
+        <div class="scroll-x"><div class="lanes" id="cycleLanes"></div></div>
+      </div>
+    </section>
+
+    <section id="simulator">
+      <header class="sec-head"><h2>Simulator: apa yang terjadi jika…</h2><p>Pilih skenario. Simulator tidak menyentuh Hub, Agent, printer, atau database; ia hanya memvisualisasikan aturan state machine yang berjalan dan gap yang ditemukan audit.</p></header>
+      <div class="sim">
+        <div class="box scenario-list" id="scenarioList"></div>
+        <div class="box sim-stage">
+          <div class="sim-top" id="simMetrics"></div>
+          <div class="sim-flow" id="simFlow"></div>
+          <div class="event-log" id="eventLog"></div>
+          <div class="sim-note" id="simNote"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="heartbeat">
+      <header class="sec-head"><h2>Heartbeat menentukan apakah printer benar-benar tersedia</h2><p>Status printer mentah tidak boleh berdiri sendiri. Geser waktu sejak heartbeat terakhir: availability printer mengikuti Agent agar laporan lama ONLINE tidak menyesatkan operator.</p></header>
+      <div class="heartbeat">
+        <div class="box hb-control">
+          <div class="eyebrow">Detik sejak heartbeat terakhir</div><div class="hb-big"><span id="hbSeconds">30</span><small style="font-size:.28em;color:var(--muted)"> detik</small></div>
+          <input id="hbRange" type="range" min="0" max="300" step="5" value="30" aria-label="Detik sejak heartbeat terakhir">
+          <div class="hb-track"><span></span><span></span><span></span></div><div class="hb-labels"><span>0 · online</span><span>90 · stale</span><span>180 · offline</span><span>300</span></div>
+        </div>
+        <div class="box hb-result" id="hbResult"></div>
+      </div>
+    </section>
+
+    <section id="failure">
+      <header class="sec-head"><h2>Failure dan recovery: jangan menyelesaikan masalah dengan menghapus job</h2><p>Setiap masalah memiliki recovery yang berbeda. Prinsipnya: bukti lama tetap ada, print run baru eksplisit, dan retry fisik tidak dilakukan bila kertas mungkin sudah keluar.</p></header>
+      <div class="box scroll-x"><table>
+        <thead><tr><th>Kejadian</th><th>State / bukti</th><th>Yang otomatis</th><th>Aksi operator</th><th>Risiko bila salah</th></tr></thead>
+        <tbody>
+          <tr><td>PDF header/content tidak valid</td><td><code>failed · PDF_INVALID</code></td><td>Callback Failed; tidak dikirim ke Agent.</td><td>Perbaiki PDF source, lalu <b>Refetch and retry</b>.</td><td class="sev md">Mengulang snapshot rusak.</td></tr>
+          <tr><td>Agent mati sebelum spooled</td><td><code>claimed</code>, belum ada JobId</td><td>Lease expired lalu kembali queued.</td><td>Nyalakan Agent; job diklaim ulang.</td><td class="sev md">Printer terkunci bila lease tidak dilepas.</td></tr>
+          <tr><td>Printer offline sebelum submit</td><td><code>print_error</code>, belum spooled</td><td>Retry 30s / 120s / 600s, maksimal 3 attempt.</td><td>Perbaiki printer; pantau attempt.</td><td class="sev md">Attempt habis tanpa diagnosis.</td></tr>
+          <tr><td>Kertas keluar tetapi GetJob gagal</td><td><code>printing</code> + spooler JobId</td><td>Jalur error menjadi failed; tidak auto-retry.</td><td>Periksa kertas. Pilih confirm printed atau retry dengan peringatan.</td><td class="sev hi">Invoice tercetak dua kali.</td></tr>
+          <tr><td>Callback opsifin-main down</td><td>Job tetap terminal; outbox pending</td><td>Backoff sampai batas 24 jam.</td><td>Perbaiki source; retry callback dengan audit bila expired.</td><td class="sev md">Status Hub dan Opsifin berbeda.</td></tr>
+          <tr><td>PDF source sudah diperbaiki</td><td>Job failed, snapshot lama tetap ada</td><td>Horizon mengambil snapshot baru di background.</td><td><b>Refetch and retry</b> + destination binding + reason.</td><td class="sev md">Bukti lama hilang bila job dihapus.</td></tr>
+        </tbody>
+      </table></div>
+      <div class="responsibility">
+        <article class="box source"><h3>Retry printing</h3><ul><li>Memakai snapshot lama.</li><li>Untuk Agent/spooler/printer sebelum hasil ambigu.</li><li>Membuat print run baru.</li></ul></article>
+        <article class="box hub"><h3>Refetch and retry</h3><ul><li>Mengambil PDF baru dari source.</li><li>Dikerjakan Horizon.</li><li>Snapshot lama tetap menjadi bukti.</li></ul></article>
+        <article class="box agent"><h3>Confirm physically printed</h3><ul><li>Direkomendasikan untuk hasil ambigu.</li><li>Tidak mencetak ulang.</li><li>Butuh reason, actor, dan audit.</li></ul></article>
+      </div>
+    </section>
+
+    <section id="tenant">
+      <header class="sec-head"><h2>Tenant tidak boleh pernah bersilang</h2><p>Setiap tenant mempunyai Integration ID, Source Connection, Site, Agent, printer, binding, job, dokumen, dan callback sendiri. Hub menolak request yang tidak membawa konteks atau mencoba memakai resource tenant lain.</p></header>
+      <div class="tenant-demo">
+        <article class="box tenant a"><span class="tag t-source">TENANT A</span><h3>Bravo</h3><div class="tenant-tree"><div><b>integration_id A</b></div><div>Opsifin Bravo · Verified</div><div>Jakarta → PC-KASIR-01 → EPSON</div><div>Binding A → Job A → Document A</div></div></article>
+        <div class="barrier"><span>GLOBAL SCOPE + TOKEN + FOREIGN KEY + TEST</span></div>
+        <article class="box tenant b"><span class="tag t-agent">TENANT B</span><h3>AGI</h3><div class="tenant-tree"><div><b>integration_id B</b></div><div>Opsifin AGI · Verified</div><div>Surabaya → PC-GUDANG-02 → ZEBRA</div><div>Binding B → Job B → Document B</div></div></article>
+      </div>
+      <div class="box attack"><div class="req"><span class="tag t-source">Agent Bravo</span><p style="margin-top:6px">Bearer token tenant A meminta claim untuk <code>printer_id B</code>.</p></div><div class="arr">→</div><div class="res">NO CONTENT / NOT FOUND<br><span class="small">Tidak ada metadata tenant B yang bocor dan DB tidak berubah.</span></div></div>
+      <div class="box scroll-x" style="margin-top:14px"><table><thead><tr><th>Boundary</th><th>Penjaga</th><th>Perilaku fail-safe</th><th>Bukti minimum</th></tr></thead><tbody>
+        <tr><td>Model bisnis</td><td><code>BelongsToTenant</code></td><td>Tanpa TenantContext query menjadi kosong; create melempar exception.</td><td>Architecture test semua model.</td></tr>
+        <tr><td>Agent API</td><td>Token <code>agent_id.device_secret</code></td><td>Revoked/tenant suspended/secret salah → 401.</td><td>Cross-tenant claim dan event test.</td></tr>
+        <tr><td>Source</td><td>Integration ID + Basic Auth</td><td>Mismatch/pending/unavailable → inactive; binding ikut inactive.</td><td>/identity response + audit.</td></tr>
+        <tr><td>Storage</td><td><code>tenants/{tenant_id}/documents</code></td><td>Signed download dan admin download memeriksa tenant/document.</td><td>403/404 cross-tenant.</td></tr>
+        <tr><td>Manual retry</td><td>Role + same Source Connection</td><td>Destination binding tenant/source lain ditolak.</td><td>Event binding lama/baru.</td></tr>
+      </tbody></table></div>
+    </section>
+
+    <section id="teknis">
+      <header class="sec-head"><h2>Di balik layar</h2><p>Monolith modular: satu aplikasi Hub, satu database, Redis/Horizon untuk pekerjaan background, dan Agent kecil di Windows. Kompleksitas ditambah hanya pada batas yang memang membutuhkan durability atau concurrency.</p></header>
+      <div class="layers">
+        <article class="layer"><span class="n">01</span><h3>Admin / API</h3><ul><li>Filament internal-only</li><li>/agent/v1 contract</li><li>Tenant middleware</li></ul></article>
+        <article class="layer"><span class="n">02</span><h3>Domain services</h3><ul><li>Sources + Fleet</li><li>Jobs state machine</li><li>Delivery outbox</li></ul></article>
+        <article class="layer"><span class="n">03</span><h3>Persistence</h3><ul><li>MySQL tenant rows</li><li>Local PDF storage</li><li>Redis Horizon queue</li></ul></article>
+        <article class="layer"><span class="n">04</span><h3>Windows edge</h3><ul><li>.NET 10 service</li><li>PDFium + GDI</li><li>SQLite event outbox</li></ul></article>
+      </div>
+      <div class="box writes">
+        <div class="eyebrow">Satu happy path menulis ke</div><div class="chain"><span>documents</span><i>→</i><span>print_jobs</span><i>→</i><span>print_job_events</span><i>→</i><span>print_job_attempts</span><i>→</i><span>callback_outbox</span><i>→</i><span>audit_logs (config/manual action)</span></div>
+      </div>
+      <div class="box scroll-x" style="margin-top:14px"><table><thead><tr><th>Loop</th><th>Interval</th><th>Lokasi</th><th>Tujuan</th><th>Catatan</th></tr></thead><tbody>
+        <tr><td>Source pull scheduler</td><td><code>10s</code> scan; per binding default 30s</td><td>Hub scheduler</td><td>getData + snapshot</td><td>Masih serial; direkomendasikan dispatch ke Horizon sebelum pilot multi-tenant.</td></tr>
+        <tr><td>Agent claim</td><td><code>5s</code></td><td>Agent → Hub</td><td>Ambil job tertua per printer</td><td>FOR UPDATE SKIP LOCKED, satu active job per printer.</td></tr>
+        <tr><td>Heartbeat</td><td><code>30s</code></td><td>Agent → Hub</td><td>Presence, printers, config, commands</td><td>Online 90s; offline 180s.</td></tr>
+        <tr><td>Lease release</td><td><code>10s</code></td><td>Hub scheduler</td><td>Melepas job yang macet</td><td>Harus membedakan sebelum/sesudah spooled.</td></tr>
+        <tr><td>Callback</td><td><code>10s</code> scan + backoff</td><td>Hub → Opsifin</td><td>Success / Failed</td><td>Outbox per print run.</td></tr>
+        <tr><td>Refetch retry</td><td>On demand + recovery 1m</td><td>Horizon</td><td>PDF baru + requeue</td><td>Tidak menahan modal Livewire.</td></tr>
+      </tbody></table></div>
+    </section>
+
+    <section id="e2e">
+      <header class="sec-head"><h2>Uji end-to-end tanpa dan dengan printer fisik</h2><p>Checklist tersimpan di browser ini. Simulation membuktikan routing, state, callback, dan recovery; printer fisik tetap wajib untuk kualitas, driver, spooler, serta bukti bahwa kertas benar-benar keluar sekali.</p></header>
+      <div class="qa-progress"><div class="track"><i id="qaBar"></i></div><b id="qaCount">0 / 10</b></div>
+      <div class="qa-grid" id="qaGrid"></div>
+      <div class="box scroll-x" style="margin-top:14px"><table><thead><tr><th>Skenario</th><th>Expected</th><th>Bukti yang disimpan</th></tr></thead><tbody>
+        <tr><td>Simulation happy path</td><td>printed + callback Success, tanpa kertas.</td><td>job_id, run, attempt, timeline, callback HTTP.</td></tr>
+        <tr><td>Printer fisik happy path</td><td>Invoice benar keluar tepat sekali.</td><td>Kertas, SHA-256, page count, spooler JobId.</td></tr>
+        <tr><td>Agent mati sebelum spool</td><td>Lease kembali queued; satu attempt baru.</td><td>lease_expired event dan attempt outcome.</td></tr>
+        <tr><td>Jaringan putus setelah spool</td><td>Tidak submit PDF kedua; resume journal.</td><td>Agent log, spool journal, jumlah kertas.</td></tr>
+        <tr><td>Cross-tenant</td><td>Claim/download/retry ditolak tanpa metadata bocor.</td><td>HTTP response dan unchanged DB.</td></tr>
+        <tr><td>PDF_INVALID → refetch</td><td>Snapshot baru, run naik, bukti lama tetap ada.</td><td>Dua document_id/SHA + request Horizon.</td></tr>
+      </tbody></table></div>
+    </section>
+
+    <section id="rilis">
+      <header class="sec-head"><h2>Dari lokal menuju produksi</h2><p>Pipeline lokal yang berhasil belum sama dengan production-ready. Setiap gate menambah jenis bukti yang tidak bisa digantikan oleh unit test.</p></header>
+      <div class="road">
+        <article class="mile now"><span class="no">01 · NOW</span><h3>Local</h3><p>Pipeline, simulation, printer fisik, callback, Horizon refetch, OTA Agent.</p></article>
+        <article class="mile"><span class="no">02</span><h3>Safety fixes</h3><p>Lease setelah spool, confirm printed, URL allowlist, callback expiry.</p></article>
+        <article class="mile"><span class="no">03</span><h3>QA environment</h3><p>Full cycle, tenant isolation, network chaos, backup/restore.</p></article>
+        <article class="mile"><span class="no">04</span><h3>Pilot tenant</h3><p>Minimal 3 site, 5 printer, 2 minggu, legacy fallback dingin.</p></article>
+        <article class="mile"><span class="no">05</span><h3>Production</h3><p>TLS, monitoring, Authenticode Opsigo, alert, runbook, SLO.</p></article>
+      </div>
+      <div class="open-grid">
+        <article class="box open"><b>Lease expired setelah spooled</b><p>Kode Hub masih mengembalikan state printing ke queued seperti claimed.</p><em>Rekomendasi: PRINT_RESULT_UNKNOWN, tidak auto-retry.</em></article>
+        <article class="box open"><b>Hasil fisik ambigu</b><p>UI sekarang hanya Retry printing dan Refetch and retry.</p><em>Rekomendasi: Confirm physically printed dengan reason + audit.</em></article>
+        <article class="box open"><b>Host Link PDF</b><p>HTTP(S) valid masih dapat menunjuk host apa pun.</p><em>Rekomendasi: Base URL host + allowlist per connection.</em></article>
+        <article class="box open"><b>Retensi snapshot</b><p>Schema punya expires_at, tetapi belum ada expiry/purge aktif.</p><em>Rekomendasi: 90 hari per tenant + legal hold.</em></article>
+      </div>
+    </section>
+
+    <footer class="foot">Disusun dari PRD, kontrak <code>agent-v1</code>, kode Hub working tree, skema/data MySQL lokal, dan pemeriksaan repo Agent 0.3.11 per 10 Nov 2026. Bila dokumen berbeda dengan kode yang berjalan, kode dan audit runtime yang berlaku.</footer>
+  </main>
+
+  <script>
+  (() => {
+    const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
+    const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    const SYS={
+      source:{title:'opsifin-main',tag:'SOURCE OF BUSINESS TRUTH',tone:'t-source',desc:'Menentukan invoice mana yang siap dicetak, merender PDF dari Link, dan menerima hasil akhir. Source tidak mengetahui device token Agent atau cara printer Windows bekerja.',owns:['REST credential milik Hub','getData queue','PDF Link','print_status bisnis'],never:['Memilih Agent secara langsung','Menerima tenant lain','Menjadi bukti bahwa kertas keluar']},
+      hub:{title:'Opsifin Print Hub',tag:'CONTROL PLANE',tone:'t-hub',desc:'Memverifikasi identity, menyimpan snapshot, memilih destination printer melalui binding, mengelola state/lease/retry/callback, dan menyediakan audit untuk tim internal.',owns:['Tenant + Integration ID','Source Connection + Binding','Job, document, attempt, event','Callback + audit'],never:['Mencetak langsung','Memercayai printer status lama','Mencampur resource tenant']},
+      agent:{title:'Agent Windows',tag:'EDGE WORKER',tone:'t-agent',desc:'Satu service per PC. Agent menginventaris printer, mengklaim job, memvalidasi snapshot, merender PDF, memantau spooler, dan menyimpan event saat Hub tidak dapat dijangkau.',owns:['Device secret','Printer inventory','Active print journal','SQLite event outbox'],never:['Menyimpan credential Opsifin','Memilih tenant/source','Mengubah business status']},
+      spooler:{title:'Windows Spooler',tag:'PHYSICAL QUEUE',tone:'t-spool',desc:'Memberi JobId spesifik dan status queue. JobId adalah bukti submit ke Windows, tetapi status selesai tetap best-effort terhadap kertas fisik.',owns:['Spooler JobId','Queue status','Pages printed (driver-dependent)'],never:['Menjamin kertas benar-benar keluar','Mengetahui invoice/tenant','Mengirim callback Opsifin']},
+      printer:{title:'Printer & driver',tag:'PHYSICAL OUTPUT',tone:'t-hub',desc:'Batas paling akhir. Driver, port, koneksi, tray, kertas, dan kondisi mekanis menentukan hasil fisik yang tidak sepenuhnya terlihat oleh software.',owns:['Paper output','Driver-specific behavior','Physical errors'],never:['Menjadi sumber status bisnis','Menyimpan histori Hub','Menentukan retry']}
+    };
+    function showSys(k){const s=SYS[k];$$('.sys-node').forEach(n=>n.classList.toggle('on',n.dataset.sys===k));$('#sysDetail').innerHTML=`<div><span class="tag ${s.tone}">${s.tag}</span><h3 style="margin-top:7px">${esc(s.title)}</h3><p class="muted" style="margin-top:5px">${esc(s.desc)}</p></div><div class="stack" style="gap:9px"><div><div class="eyebrow" style="margin-bottom:5px">Memegang</div><div class="chips">${s.owns.map(x=>`<span class="chip ok">${esc(x)}</span>`).join('')}</div></div><div><div class="eyebrow" style="margin-bottom:5px">Tidak boleh</div><div class="chips">${s.never.map(x=>`<span class="chip no">${esc(x)}</span>`).join('')}</div></div></div>`}
+    $$('.sys-node').forEach(n=>{n.addEventListener('click',()=>showSys(n.dataset.sys));n.addEventListener('keydown',e=>{if(['Enter',' '].includes(e.key)){e.preventDefault();showSys(n.dataset.sys)}})});showSys('hub');
+
+    const ONBOARD=[
+      {k:'tenant',t:'Buat Tenant master',p:'Hub membuat integration_id UUID permanen.',li:['Code, nama, dan timezone harus benar.','Client tidak login ke Hub; ini control plane internal.']},
+      {k:'identity',t:'Verify Integration Identity',p:'Connection baru selalu inactive sampai remote membuktikan tenant yang sama.',li:['GET {base_url}/identity memakai Basic Auth.','UUID mismatch/pending/unavailable memblokir binding, pull, claim, status, dan callback.']},
+      {k:'site',t:'Buat Site lokasi fisik',p:'Site menjawab PC dan printer ini berada di mana.',li:['Contoh: Jakarta Office.','Pairing code Site menempatkan Agent ke lokasi yang benar.']},
+      {k:'agent',t:'Pair Agent pada PC',p:'Pairing code 8 karakter berlaku 15 menit dan sekali pakai.',li:['machine_id unik per tenant; pairing ulang memakai Agent lama.','Heartbeat pertama membawa versi dan inventaris printer.']},
+      {k:'printer',t:'Aktifkan destination printer',p:'Pilih printer Windows yang memang akan menerima invoice.',li:['Cek driver, port, status efektif, dan print settings.','Printer virtual tetap inactive kecuali untuk QA.']},
+      {k:'binding',t:'Sync binding lalu cutover',p:'Binding menghubungkan Source PrinterName ke destination printer.',li:['Simpan inactive, sync /printerName, lalu matikan autoprint lama.','Aktifkan hanya setelah Last Pull dan route dapat dipantau.']}
+    ];
+    $('#onboardSteps').innerHTML=ONBOARD.map((x,i)=>`<li><button class="step-btn" data-i="${i}"><span class="step-no">${i+1}</span><span>${esc(x.t)}</span></button></li>`).join('');
+    function showOnboard(i){const x=ONBOARD[i];$$('.step-btn').forEach((b,n)=>b.classList.toggle('on',n===i));$$('.mini-row').forEach(r=>r.classList.toggle('hit',r.dataset.ob===x.k));$('#onboardDetail').innerHTML=`<b>${esc(x.p)}</b><ul>${x.li.map(v=>`<li>${esc(v)}</li>`).join('')}</ul>`}
+    $('#onboardSteps').addEventListener('click',e=>{const b=e.target.closest('button');if(b)showOnboard(+b.dataset.i)});$$('.mini-row').forEach((r,i)=>r.addEventListener('click',()=>showOnboard(i)));showOnboard(1);
+
+    const STATES={
+      received:{title:'Received',tag:'SOURCE INTAKE',meaning:'Payload getData sudah dikenali. PDF belum menjadi bukti dan belum boleh dikirim ke Agent.',owner:'Hub · Sources',proof:'InvNo + ItemType + VersionInv',next:'queued / skipped / failed',actions:['Inspect source payload']},
+      queued:{title:'Queued',tag:'READY FOR AGENT',meaning:'PDF valid sudah menjadi snapshot dengan SHA-256, page count, size, dan tenant storage path.',owner:'Hub · Jobs',proof:'document_id + sha256',next:'claimed / cancelled',actions:['Wait','Cancel (planned)']},
+      claimed:{title:'Claimed',tag:'LEASE ACTIVE',meaning:'Satu Agent memegang job selama 120 detik. Attempt baru dan lease owner sudah tersimpan.',owner:'Hub + Agent',proof:'attempt_id + lease_until',next:'printing / queued',actions:['Download','Extend lease']},
+      printing:{title:'Printing',tag:'PHYSICAL OUTCOME POSSIBLE',meaning:'Agent sudah melaporkan spooled dan Hub mengetahui spooler JobId. Mulai titik ini retry otomatis dapat menggandakan kertas.',owner:'Agent + Spooler',proof:'spooler_job_id + spooled_at',next:'printed / failed or review',actions:['Monitor','Do not auto-retry']},
+      printed:{title:'Printed',tag:'TERMINAL SUCCESS',meaning:'Spooler selesai tanpa error atau hasil ditandai printed_unverified. Callback Success dibuat untuk print run ini.',owner:'Hub · Delivery',proof:'printed_at + callback outbox',next:'callback sent',actions:['Download PDF','View timeline']},
+      skipped:{title:'Skipped',tag:'TERMINAL NO PAPER',meaning:'Source mengirim IsHardCopyInv=N. Job tidak masuk Agent tetapi callback bisnis tetap Success.',owner:'Hub · Intake',proof:'skipped event',next:'callback sent',actions:['View timeline']},
+      failed:{title:'Failed',tag:'TERMINAL NEEDS ACTION',meaning:'PDF invalid, error permanen, attempt habis, atau hasil fisik ambigu. Histori tetap disimpan.',owner:'Hub + Operator',proof:'failure_code + attempt/event',next:'new print run / resolve',actions:['Retry printing','Refetch and retry','Confirm printed (recommended)']}
+    };
+    function showState(k){const s=STATES[k];$$('.state-node').forEach(n=>n.classList.toggle('on',n.dataset.state===k));$('#stateDetail').innerHTML=`<div><span class="tag ${k==='failed'?'t-danger':k==='printed'?'t-agent':'t-hub'}">${s.tag}</span><h3 style="margin-top:7px">${s.title}</h3><p class="muted" style="margin-top:5px">${s.meaning}</p><div class="chips" style="margin-top:9px">${s.actions.map(a=>`<span class="chip">${esc(a)}</span>`).join('')}</div></div><dl class="kv"><dt>Pemilik</dt><dd>${esc(s.owner)}</dd><dt>Bukti</dt><dd>${esc(s.proof)}</dd><dt>Berikutnya</dt><dd>${esc(s.next)}</dd></dl>`}
+    $$('.state-node').forEach(n=>n.addEventListener('click',()=>showState(n.dataset.state)));showState('printing');
+
+    const CYCLE=[
+      ['01','Opsifin','Invoice ready','log_print_inv menjadi kandidat.'],['02','Hub','POST /getData','Binding menentukan PrinterName/Identifier.'],['03','Hub','Dedupe','Unique tenant + invoice + type + version.'],['04','Hub','Fetch & validate PDF','Snapshot + SHA-256 + page count.'],['05','Hub','Queue','received → queued.'],['06','Agent','Claim','Attempt + lease 120 detik.'],['07','Agent','Download','Signed URL 5 menit + hash check.'],['08','Agent','Submit print','PDFium → GDI → spooler JobId.'],['09','Spooler','Monitor','Status spesifik JobId + window 60 detik.'],['10','Hub','Terminal state','completed → printed; error → retry/failed.'],['11','Opsifin','Callback','Success/Failed melalui outbox.']
+    ];
+    const laneNames=['Step','Opsifin','Hub','Agent','Spooler','Printer'];
+    const laneFor={Opsifin:1,Hub:2,Agent:3,Spooler:4,Printer:5};
+    let laneHtml=laneNames.map(x=>`<div class="lane-head">${x}</div>`).join('');
+    CYCLE.forEach(([n,who,t,p],i)=>{laneHtml+=`<div class="cycle-step" data-cycle="${i}">${n}</div>`;for(let c=1;c<6;c++)laneHtml+=`<div class="cycle-step" data-cycle="${i}">${laneFor[who]===c?`<b>${esc(t)}</b>${esc(p)}`:''}</div>`});$('#cycleLanes').innerHTML=laneHtml;
+    $('#playCycle').addEventListener('click',e=>{const cells=$$('[data-cycle]');let i=0;e.currentTarget.disabled=true;const tick=()=>{cells.forEach(c=>c.classList.toggle('active',+c.dataset.cycle===i));if(i>=CYCLE.length){cells.forEach(c=>c.classList.remove('active'));e.currentTarget.disabled=false;return}i++;setTimeout(tick,reduced?650:900)};tick()});
+
+    const SCENARIOS=[
+      {k:'physical',label:'Printer fisik · sukses',state:'printed',run:'1',cb:'Success · sent',action:'Tidak ada',nodes:5,events:[['00:00','Opsifin','Invoice TK-001 masuk getData',''],['00:02','Hub','PDF valid · SHA-256 tersimpan',''],['00:05','Agent','Claim attempt 1 · lease 120s',''],['00:07','Spooler','spooled · JobId 42',''],['01:08','Agent','completed · pages 1','good'],['01:09','Hub','printed · callback Success','good']],note:'Happy path production. Bukti harus menghubungkan snapshot hash, attempt, spooler JobId, printed_at, dan callback run yang sama.',actions:['Download snapshot','Open source URL','Inspect timeline']},
+      {k:'simulation',label:'Simulation mode · sukses',state:'printed',run:'1',cb:'Success · sent',action:'Tidak ada',nodes:4,events:[['00:00','Hub','Job queued',''],['00:05','Agent','Simulation claim',''],['00:06','Agent','Simulated spooler JobId',''],['00:07','Agent','Verification selesai','good'],['00:08','Hub','printed + callback','good']],note:'Menguji seluruh control plane tanpa kertas. Tidak membuktikan driver, GDI, kualitas hasil, atau printer fisik.',actions:['Use for E2E routing','Not a physical acceptance test']},
+      {k:'pdf',label:'PDF invalid',state:'failed',run:'1',cb:'Failed · sent',action:'Refetch and retry',nodes:1,events:[['00:00','Opsifin','getData mengembalikan Link',''],['00:02','Hub','Header/content PDF tidak valid','bad'],['00:02','Hub','failed · PDF_INVALID','bad'],['00:03','Hub','callback Failed','warn']],note:'Tidak pernah mencapai Agent. Setelah PDF source diperbaiki, Refetch and retry membuat snapshot baru dan run berikutnya.',actions:['Fix PDF in Opsifin','Refetch and retry','Keep old evidence']},
+      {k:'offline',label:'Agent mati sebelum spool',state:'queued',run:'1 · attempt 1 closed',cb:'Belum dibuat',action:'Tunggu Agent online',nodes:2,events:[['00:00','Hub','Job claimed · lease 120s',''],['00:40','Agent','Service berhenti sebelum submit','warn'],['02:00','Hub','lease_expired','warn'],['02:00','Hub','claimed → queued','good']],note:'Aman diulang karena belum ada spooler JobId. Saat Agent pulih, claim berikutnya membuat attempt baru.',actions:['Restart Agent','Check heartbeat','Wait for next claim']},
+      {k:'ambiguous',label:'Kertas keluar, probe gagal',state:'failed / unknown',run:'1',cb:'Failed (current behavior)',action:'Periksa kertas',nodes:5,events:[['00:00','Agent','Claim + download valid',''],['00:03','Spooler','spooled · JobId 3',''],['00:05','Printer','Kertas kemungkinan sudah keluar','warn'],['00:05','Agent','GetJob probe failed','bad'],['00:06','Hub','failed · PRINT_FAILED','bad']],note:'Ini titik paling berbahaya. Retry fisik dapat menggandakan invoice. Audit merekomendasikan Confirm physically printed dengan reason + audit.',actions:['Inspect physical output','Confirm printed (recommended)','Retry with duplicate warning']},
+      {k:'callback',label:'Callback source down',state:'printed',run:'1',cb:'Pending · backoff',action:'Pulihkan Opsifin',nodes:5,events:[['00:00','Hub','Job already printed','good'],['00:01','Hub','Callback HTTP timeout','warn'],['00:31','Hub','Retry 1 gagal','warn'],['02:31','Hub','Retry 2 gagal','warn'],['12:31','Hub','Retry 3 dijadwalkan','warn']],note:'Status fisik tidak berubah kembali. Outbox menjaga pengiriman terpisah. Setelah 24 jam seharusnya expired dan recovery manual diaudit.',actions:['Fix source connectivity','Monitor callback age','Manual retry after expiry']}
+    ];
+    const nodeNames=['Opsifin','Hub','Agent','Spooler','Printer'];
+    $('#scenarioList').innerHTML=SCENARIOS.map(s=>`<button data-scenario="${s.k}">${esc(s.label)}</button>`).join('');
+    function showScenario(k){const s=SCENARIOS.find(x=>x.k===k);$$('[data-scenario]').forEach(b=>b.classList.toggle('on',b.dataset.scenario===k));$('#simMetrics').innerHTML=[['Job state',s.state],['Print run',s.run],['Callback',s.cb],['Operator',s.action]].map(([a,b])=>`<div class="metric"><small>${esc(a)}</small><b>${esc(b)}</b></div>`).join('');$('#simFlow').innerHTML=nodeNames.map((n,i)=>`${i?'<span class="sim-arrow">→</span>':''}<div class="sim-node ${i<s.nodes?'done':''} ${i===s.nodes-1?'current':''}"><strong>${n}</strong><span>${i<s.nodes?'reached':'not reached'}</span></div>`).join('');$('#eventLog').innerHTML=s.events.map(e=>`<div class="event ${e[3]}"><time>${e[0]}</time><span class="who">${esc(e[1])}</span><span>${esc(e[2])}</span></div>`).join('');$('#simNote').innerHTML=`<strong>${esc(s.note)}</strong><div class="sim-actions">${s.actions.map(a=>`<span class="action-pill">${esc(a)}</span>`).join('')}</div>`}
+    $('#scenarioList').addEventListener('click',e=>{const b=e.target.closest('button');if(b)showScenario(b.dataset.scenario)});showScenario('ambiguous');
+
+    function renderHb(){const sec=+$('#hbRange').value;$('#hbSeconds').textContent=sec;const p=sec<90?'online':sec<=180?'stale':'offline';const agent=p==='online'?'Online':p==='stale'?'Stale':'Offline';const printer=p==='online'?'ONLINE (reported)':p==='stale'?'AGENT_STALE':'AGENT_OFFLINE';const tone=p==='online'?'var(--success)':p==='stale'?'var(--warn)':'var(--danger)';$('#hbResult').innerHTML=`<div class="hb-card"><small>Agent presence</small><b style="color:${tone}">${agent}</b></div><div class="hb-card"><small>Printer effective status</small><b style="color:${tone}">${printer}</b></div><p class="hb-explain">${p==='online'?'Heartbeat masih segar. Status printer mentah boleh dipakai.':p==='stale'?'Laporan printer mulai usang. Hub menampilkan Agent stale agar operator tidak menganggap printer pasti tersedia.':'Status mentah terakhir tetap disimpan sebagai bukti, tetapi availability efektif menjadi Agent offline.'}</p>`}
+    $('#hbRange').addEventListener('input',renderHb);renderHb();
+
+    const QA=[
+      ['Tenant + /identity','UUID Hub sama dengan opsifin-main; mismatch fail-closed.'],['Agent pairing','machine_id sama memakai Agent lama, secret diganti.'],['Simulation happy path','queued → claimed → printing → printed → callback Success.'],['Printer fisik','Kertas benar keluar sekali; hash/page/JobId tercatat.'],['Dedupe','Payload sama berulang tidak membuat print kedua.'],['Lease sebelum spool','Agent mati; job kembali queued dan attempt lama ditutup.'],['Gangguan setelah spool','Tidak ada submit kedua tanpa keputusan operator.'],['PDF_INVALID + refetch','Snapshot baru/run baru; snapshot lama tetap ada.'],['Cross-tenant','Claim/download/view/retry tenant lain ditolak.'],['Callback outage','Backoff, expiry, alert, dan recovery dapat diaudit.']
+    ];
+    const store='opsifin-print-hub-agent-flow-v1-qa';let saved={};try{saved=JSON.parse(localStorage.getItem(store)||'{}')}catch{}
+    $('#qaGrid').innerHTML=QA.map((q,i)=>`<label class="check-card"><input type="checkbox" data-qa="${i}" ${saved[i]?'checked':''}><span><b>${esc(q[0])}</b><span>${esc(q[1])}</span></span></label>`).join('');
+    function updateQa(){const boxes=$$('[data-qa]');const done=boxes.filter(b=>b.checked).length;$('#qaCount').textContent=`${done} / ${boxes.length}`;$('#qaBar').style.width=`${done/boxes.length*100}%`;saved={};boxes.forEach((b,i)=>saved[i]=b.checked);localStorage.setItem(store,JSON.stringify(saved))}
+    $('#qaGrid').addEventListener('change',updateQa);updateQa();
+
+    const nav=$$('#navList a'), byId=Object.fromEntries(nav.map(a=>[a.hash.slice(1),a]));if('IntersectionObserver'in window){const io=new IntersectionObserver(es=>es.forEach(e=>{if(!e.isIntersecting)return;nav.forEach(a=>a.classList.remove('on'));const a=byId[e.target.id];if(a){a.classList.add('on');a.closest('ol').scrollLeft=a.offsetLeft-a.closest('ol').clientWidth/2+a.clientWidth/2}}),{rootMargin:'-45% 0px -50%'});$$('main section').forEach(s=>io.observe(s))}
+    $('#themeBtn').addEventListener('click',()=>{const r=document.documentElement;const dark=r.dataset.theme==='dark'||(!r.dataset.theme&&matchMedia('(prefers-color-scheme:dark)').matches);r.dataset.theme=dark?'light':'dark'});
+  })();
+  </script>
+</body>
+</html>

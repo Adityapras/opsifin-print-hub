@@ -4,6 +4,9 @@ use App\Domain\Fleet\Models\Agent;
 use App\Domain\Fleet\Models\AgentCommand;
 use App\Domain\Fleet\Models\Printer;
 use App\Domain\Fleet\Models\Site;
+use App\Domain\Sources\Enums\SourceIdentityStatus;
+use App\Domain\Sources\Models\PrinterBinding;
+use App\Domain\Sources\Models\SourceConnection;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Services\TenantContext;
 
@@ -71,6 +74,7 @@ it('mencatat heartbeat dan menemukan printer secara otomatis', function () {
     $response
         ->assertOk()
         ->assertJsonPath('config_version', 1)
+        ->assertJsonPath('config.source_poll_interval_s', null)
         ->assertJsonPath('config.printers', [])
         ->assertJsonPath('commands', []);
 
@@ -86,6 +90,163 @@ it('mencatat heartbeat dan menemukan printer secara otomatis', function () {
         ->and($printer->windows_name)->toBe('EPSON-LQ-01')
         ->and($printer->status)->toBe('ONLINE')
         ->and($printer->is_active)->toBeFalse();
+});
+
+it('mengirim interval source tunggal dan null ketika jadwal agent ambigu', function () {
+    $secret = 'secret-agent-a';
+    [$tenant, , $agent] = createHeartbeatAgent('tenant-source-interval', $secret);
+    $context = app(TenantContext::class);
+    $context->set($tenant->getKey());
+
+    $printerA = Printer::query()->create([
+        'agent_id' => $agent->getKey(),
+        'windows_name' => 'INTERVAL-PRINTER-A',
+        'status' => 'ONLINE',
+        'is_active' => true,
+    ]);
+    $connectionA = SourceConnection::query()->create([
+        'name' => 'Interval Source A',
+        'base_url' => 'https://interval-a.test/rest/autoprint',
+        'username' => 'rest-user',
+        'password_enc' => 'rest-password',
+        'pull_interval_s' => 30,
+    ]);
+    $connectionA->forceFill([
+        'identity_status' => SourceIdentityStatus::Verified,
+        'remote_integration_id' => $tenant->integration_id,
+        'identity_verified_at' => now(),
+        'is_active' => true,
+    ])->saveQuietly();
+    PrinterBinding::query()->create([
+        'source_connection_id' => $connectionA->getKey(),
+        'printer_id' => $printerA->getKey(),
+        'source_printer_name' => 'INTERVAL-PRINTER-A',
+        'source_identifier' => 'SOURCE-A',
+        'printer_version' => 1,
+        'is_active' => true,
+    ]);
+
+    $versionWithOneSource = $agent->fresh()->config_version;
+    $context->clear();
+
+    $this->postJson(
+        '/agent/v1/heartbeat',
+        heartbeatPayload($versionWithOneSource - 1, [['name' => $printerA->windows_name, 'status' => 'ONLINE']]),
+        heartbeatHeaders($agent, $secret),
+    )
+        ->assertOk()
+        ->assertJsonPath('config.source_poll_interval_s', 30);
+
+    $context->set($tenant->getKey());
+    $printerB = Printer::query()->create([
+        'agent_id' => $agent->getKey(),
+        'windows_name' => 'INTERVAL-PRINTER-B',
+        'status' => 'ONLINE',
+        'is_active' => true,
+    ]);
+    $connectionB = SourceConnection::query()->create([
+        'name' => 'Interval Source B',
+        'base_url' => 'https://interval-b.test/rest/autoprint',
+        'username' => 'rest-user',
+        'password_enc' => 'rest-password',
+        'pull_interval_s' => 30,
+    ]);
+    $connectionB->forceFill([
+        'identity_status' => SourceIdentityStatus::Verified,
+        'remote_integration_id' => $tenant->integration_id,
+        'identity_verified_at' => now(),
+        'is_active' => true,
+    ])->saveQuietly();
+    PrinterBinding::query()->create([
+        'source_connection_id' => $connectionB->getKey(),
+        'printer_id' => $printerB->getKey(),
+        'source_printer_name' => 'INTERVAL-PRINTER-B',
+        'source_identifier' => 'SOURCE-B',
+        'printer_version' => 1,
+        'is_active' => true,
+    ]);
+
+    $versionWithMatchingSources = $agent->fresh()->config_version;
+    $context->clear();
+
+    $this->postJson(
+        '/agent/v1/heartbeat',
+        heartbeatPayload($versionWithMatchingSources - 1, [
+            ['name' => $printerA->windows_name, 'status' => 'ONLINE'],
+            ['name' => $printerB->windows_name, 'status' => 'ONLINE'],
+        ]),
+        heartbeatHeaders($agent, $secret),
+    )
+        ->assertOk()
+        ->assertJsonPath('config.source_poll_interval_s', 30);
+
+    $context->set($tenant->getKey());
+    $connectionB->update(['pull_interval_s' => 60]);
+    $ambiguousVersion = $agent->fresh()->config_version;
+    $context->clear();
+
+    $this->postJson(
+        '/agent/v1/heartbeat',
+        heartbeatPayload($versionWithMatchingSources, [
+            ['name' => $printerA->windows_name, 'status' => 'ONLINE'],
+            ['name' => $printerB->windows_name, 'status' => 'ONLINE'],
+        ]),
+        heartbeatHeaders($agent, $secret),
+    )
+        ->assertOk()
+        ->assertJsonPath('config_version', $ambiguousVersion)
+        ->assertJsonPath('config.source_poll_interval_s', null);
+});
+
+it('menaikkan config version saat interval source berubah', function () {
+    $secret = 'secret-agent-a';
+    [$tenant, , $agent] = createHeartbeatAgent('tenant-source-version', $secret);
+    $context = app(TenantContext::class);
+    $context->set($tenant->getKey());
+
+    $printer = Printer::query()->create([
+        'agent_id' => $agent->getKey(),
+        'windows_name' => 'VERSION-PRINTER',
+        'status' => 'ONLINE',
+        'is_active' => true,
+    ]);
+    $connection = SourceConnection::query()->create([
+        'name' => 'Version Source',
+        'base_url' => 'https://version-source.test/rest/autoprint',
+        'username' => 'rest-user',
+        'password_enc' => 'rest-password',
+        'pull_interval_s' => 30,
+    ]);
+    $connection->forceFill([
+        'identity_status' => SourceIdentityStatus::Verified,
+        'remote_integration_id' => $tenant->integration_id,
+        'identity_verified_at' => now(),
+        'is_active' => true,
+    ])->saveQuietly();
+    PrinterBinding::query()->create([
+        'source_connection_id' => $connection->getKey(),
+        'printer_id' => $printer->getKey(),
+        'source_printer_name' => 'VERSION-PRINTER',
+        'source_identifier' => 'VERSION-SOURCE',
+        'printer_version' => 1,
+        'is_active' => true,
+    ]);
+
+    $oldVersion = $agent->fresh()->config_version;
+    $connection->update(['pull_interval_s' => 45]);
+    $newVersion = $agent->fresh()->config_version;
+    $context->clear();
+
+    expect($newVersion)->toBe($oldVersion + 1);
+
+    $this->postJson(
+        '/agent/v1/heartbeat',
+        heartbeatPayload($oldVersion, [['name' => $printer->windows_name, 'status' => 'ONLINE']]),
+        heartbeatHeaders($agent, $secret),
+    )
+        ->assertOk()
+        ->assertJsonPath('config_version', $newVersion)
+        ->assertJsonPath('config.source_poll_interval_s', 45);
 });
 
 it('hanya mengirim config ketika versi agent berbeda dan hanya memuat printer aktif', function () {

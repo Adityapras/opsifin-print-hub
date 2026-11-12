@@ -3,6 +3,14 @@
 namespace App\Filament\Resources\Tenants;
 
 use App\Domain\Tenancy\Models\Tenant;
+use App\Filament\Resources\Agents\AgentResource;
+use App\Filament\Resources\AuditLogs\AuditLogResource;
+use App\Filament\Resources\CallbackOutboxes\CallbackOutboxResource;
+use App\Filament\Resources\PrinterBindings\PrinterBindingResource;
+use App\Filament\Resources\Printers\PrinterResource;
+use App\Filament\Resources\PrintJobs\PrintJobResource;
+use App\Filament\Resources\Sites\SiteResource;
+use App\Filament\Resources\SourceConnections\SourceConnectionResource;
 use App\Filament\Resources\Tenants\Pages\CreateTenant;
 use App\Filament\Resources\Tenants\Pages\EditTenant;
 use App\Filament\Resources\Tenants\Pages\ListTenants;
@@ -10,6 +18,7 @@ use App\Filament\Resources\Tenants\Pages\ViewTenant;
 use App\Filament\Resources\Tenants\Pages\ViewTenantIdentity;
 use App\Models\User;
 use BackedEnum;
+use Filament\Actions\ActionGroup;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
 use Filament\Actions\RestoreAction;
@@ -19,6 +28,9 @@ use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Infolists\Components\RepeatableEntry;
 use Filament\Infolists\Components\TextEntry;
+use Filament\Navigation\NavigationItem;
+use Filament\Pages\Enums\SubNavigationPosition;
+use Filament\Resources\Pages\Page;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
@@ -50,6 +62,8 @@ final class TenantResource extends Resource
     protected static ?string $recordRouteKeyName = 'code';
 
     protected static ?int $navigationSort = 10;
+
+    protected static ?SubNavigationPosition $subNavigationPosition = SubNavigationPosition::Top;
 
     public static function form(Schema $schema): Schema
     {
@@ -170,10 +184,21 @@ final class TenantResource extends Resource
                                                 ->label('Printer')
                                                 ->state(fn ($record): string => $record->alias ?: $record->windows_name)
                                                 ->icon(Heroicon::OutlinedPrinter),
-                                            TextEntry::make('status')
-                                                ->label('Status')
+                                            TextEntry::make('effective_status')
+                                                ->label('Availability')
+                                                ->formatStateUsing(fn (string $state): string => match ($state) {
+                                                    'AGENT_STALE' => 'Agent stale',
+                                                    'AGENT_OFFLINE' => 'Agent offline',
+                                                    'AGENT_REVOKED' => 'Agent revoked',
+                                                    default => str($state)->replace('_', ' ')->title()->toString(),
+                                                })
                                                 ->badge()
-                                                ->color(fn (?string $state): string => in_array($state, ['ONLINE', 'READY', 'IDLE'], true) ? 'success' : 'gray'),
+                                                ->color(fn (?string $state): string => match (true) {
+                                                    in_array($state, ['ONLINE', 'READY', 'IDLE'], true) => 'success',
+                                                    $state === 'AGENT_STALE' => 'warning',
+                                                    in_array($state, ['AGENT_OFFLINE', 'AGENT_REVOKED', 'OFFLINE', 'ERROR', 'PAPER_OUT'], true) => 'danger',
+                                                    default => 'gray',
+                                                }),
                                         ])
                                         ->columns(2)
                                         ->columnSpanFull(),
@@ -226,19 +251,26 @@ final class TenantResource extends Resource
             ])
             ->defaultSort('name')
             ->recordActions([
-                ViewAction::make()->label('Open tenant'),
-                EditAction::make()->visible(fn (): bool => self::canManageTenants()),
-                DeleteAction::make()
-                    ->label('Archive tenant')
-                    ->modalHeading('Archive tenant')
-                    ->modalDescription('Agent access and source pulling stop immediately. All configuration, print history, and audit data remain available for restore.')
-                    ->successNotificationTitle('Tenant archived')
-                    ->visible(fn (): bool => self::canManageTenants()),
-                RestoreAction::make()
-                    ->label('Restore tenant')
-                    ->modalDescription('The tenant will be restored as Suspended. Review its connections and bindings before setting it back to Active.')
-                    ->successNotificationTitle('Tenant restored')
-                    ->visible(fn (): bool => self::canManageTenants()),
+                ActionGroup::make([
+                    ViewAction::make()->label('Open tenant'),
+                    EditAction::make()->visible(fn (): bool => self::canManageTenants()),
+                    DeleteAction::make()
+                        ->label('Archive tenant')
+                        ->modalHeading('Archive tenant')
+                        ->modalDescription('Agent access and source pulling stop immediately. All configuration, print history, and audit data remain available for restore.')
+                        ->successNotificationTitle('Tenant archived')
+                        ->visible(fn (): bool => self::canManageTenants()),
+                    RestoreAction::make()
+                        ->label('Restore tenant')
+                        ->modalDescription('The tenant will be restored as Suspended. Review its connections and bindings before setting it back to Active.')
+                        ->successNotificationTitle('Tenant restored')
+                        ->visible(fn (): bool => self::canManageTenants()),
+                ])
+                    ->label('Actions')
+                    ->icon(Heroicon::OutlinedEllipsisVertical)
+                    ->color('gray')
+                    ->button()
+                    ->dropdownAutoPlacement(),
             ])
             ->emptyStateHeading('No tenants yet')
             ->emptyStateDescription('Create the first client before configuring connections, sites, and Print Agents.')
@@ -283,6 +315,72 @@ final class TenantResource extends Resource
     {
         // Histori print dan audit harus tetap dapat ditelusuri setelah client berhenti.
         return false;
+    }
+
+    /** @return array<NavigationItem> */
+    public static function getRecordSubNavigation(Page $page): array
+    {
+        if (! method_exists($page, 'getRecord')) {
+            return [];
+        }
+
+        $tenant = $page->getRecord();
+
+        if (! $tenant instanceof Tenant) {
+            return [];
+        }
+
+        return self::getTenantSubNavigation($tenant);
+    }
+
+    /** @return array<NavigationItem> */
+    public static function getTenantSubNavigation(Tenant $tenant): array
+    {
+
+        $parameters = ['tenant' => $tenant->code];
+
+        return [
+            NavigationItem::make('Overview')
+                ->icon(Heroicon::OutlinedShieldCheck)
+                ->url(self::getUrl('view', ['record' => $tenant]))
+                ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.tenants.view')),
+            NavigationItem::make('Integration identity')
+                ->icon(Heroicon::OutlinedIdentification)
+                ->url(self::getUrl('identity', ['record' => $tenant]))
+                ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.tenants.identity')),
+            NavigationItem::make('Connections')
+                ->icon(Heroicon::OutlinedCircleStack)
+                ->url(SourceConnectionResource::getUrl('index', $parameters))
+                ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.tenants.source-connections.*')),
+            NavigationItem::make('Sites')
+                ->icon(Heroicon::OutlinedMapPin)
+                ->url(SiteResource::getUrl('index', $parameters))
+                ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.tenants.sites.*')),
+            NavigationItem::make('Agents')
+                ->icon(Heroicon::OutlinedComputerDesktop)
+                ->url(AgentResource::getUrl('index', $parameters))
+                ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.tenants.agents.*')),
+            NavigationItem::make('Printers')
+                ->icon(Heroicon::OutlinedPrinter)
+                ->url(PrinterResource::getUrl('index', $parameters))
+                ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.tenants.printers.*')),
+            NavigationItem::make('Bindings')
+                ->icon(Heroicon::OutlinedLink)
+                ->url(PrinterBindingResource::getUrl('index', $parameters))
+                ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.tenants.printer-bindings.*')),
+            NavigationItem::make('Print jobs')
+                ->icon(Heroicon::OutlinedQueueList)
+                ->url(PrintJobResource::getUrl('index', $parameters))
+                ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.tenants.print-jobs.*')),
+            NavigationItem::make('Callbacks')
+                ->icon(Heroicon::OutlinedArrowPath)
+                ->url(CallbackOutboxResource::getUrl('index', $parameters))
+                ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.tenants.callback-outboxes.*')),
+            NavigationItem::make('Audit log')
+                ->icon(Heroicon::OutlinedClipboardDocumentList)
+                ->url(AuditLogResource::getUrl('index', $parameters))
+                ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.tenants.audit-logs.*')),
+        ];
     }
 
     public static function getPages(): array

@@ -1,6 +1,6 @@
 # Opsifin Print Hub — Progress Memory
 
-Last updated: 2026-11-03 (Asia/Jakarta)
+Last updated: 2026-11-12 (Asia/Jakarta)
 
 Dokumen ini menjadi handoff ringkas untuk Codex/agent berikutnya. Baca `AGENTS.md`,
 `docs/PRD.md`, dan `docs/PRD-ringkasan-keputusan.md` sebelum mengubah perilaku domain.
@@ -19,9 +19,12 @@ Dokumen ini menjadi handoff ringkas untuk Codex/agent berikutnya. Baca `AGENTS.m
 - Resource operasional selalu berada di bawah tenant master, misalnya
   `/admin/tenants/{tenant:code}/sites`, `/agents`, dan `/source-connections`.
 - Health endpoint terakhir terverifikasi HTTP 200.
-- Migrasi MySQL sudah berjalan sampai
-  `2026_11_03_000200_add_soft_deletes_to_tenants`.
-- Validasi terakhir: 59 test lulus (308 assertions), PHPStan bersih, Pint bersih.
+- Migrasi MySQL source sudah tersedia sampai
+  `2026_11_12_000000_add_internal_signature_to_agent_releases`.
+- Validasi terakhir: 92 test lulus (549 assertions), PHPStan bersih, Pint bersih.
+- Horizon aktif di `/horizon` dengan worker Redis sehat dan akses production dibatasi ke
+  Platform Admin. Horizon kini memproses background PDF refetch; source pull dan callback
+  MVP masih dijalankan langsung oleh scheduler tiap 10 detik.
 
 ## Fitur yang sudah selesai
 
@@ -35,11 +38,54 @@ Dokumen ini menjadi handoff ringkas untuk Codex/agent berikutnya. Baca `AGENTS.m
 - `POST /agent/v1/commands/{id}/result`
 - Bearer token berbentuk `<agent_id>.<device_secret>`; Hub hanya menyimpan hash secret.
 - Enrollment memakai pairing code delapan karakter, berlaku 15 menit, sekali pakai.
+- Respons claim membawa object opsional `display` berisi nomor dokumen, jenis dokumen,
+  dan waktu diterima agar Agent Control dapat menampilkan pekerjaan aktif tanpa membawa
+  customer, nilai finansial, atau source payload.
+- Remote config membawa `source_poll_interval_s` sebagai informasi. Nilainya hanya dikirim
+  bila seluruh Source Connection aktif untuk Agent memakai interval yang sama; tanpa source
+  aktif atau ketika interval berbeda, nilainya `null` agar UI tidak menyesatkan.
+- Perubahan interval/status Source Connection dan topology Printer Binding menaikkan
+  `config_version` Agent terdampak, sehingga interval terbaru dikirim pada heartbeat berikutnya.
+
+### Agent release dan OTA
+
+- Platform Admin memiliki resource global **Agent Releases** untuk upload MSI + manifest internal,
+  verifikasi signature RSA dan ProductVersion, publish, pilot 10%, rollout tenant, retire, serta
+  melihat checksum, signing key, audit event, dan ringkasan deployment. Authenticode legacy tetap
+  tersedia khusus bridge `0.3.12`.
+- Paket disimpan private dan hanya diunduh melalui signed URL. URL dibuat ulang saat command
+  benar-benar dikirim agar Agent yang lama offline tidak menerima URL kedaluwarsa.
+- Aksi **Schedule update** tersedia pada daftar Agent. Policy `automatic` tetap menunggu Agent
+  idle, menghentikan claim baru, menyelesaikan print aktif, dan flush outbox sebelum instalasi.
+- Lifecycle heartbeat opsional mencatat `downloading`, `ready`, `waiting_for_idle`, `installing`,
+  dan `failed`. Command `succeeded` hanya berarti diterima; status `installed` baru ditulis ketika
+  heartbeat berikutnya melaporkan versi target.
+- Scheduler menandai deployment tanpa progres sebagai `stalled` setelah batas konfigurasi.
+- Release bridge `0.3.12` menggunakan Authenticode development. Release internal aktif `0.3.13`
+  memiliki SHA-256 `d15565fc31eaef432e1b3ca05031d0ec652a96dc713ed20ebc9c25ebe6d714fb`
+  dan key ID `opsigo-release-2026-01`.
+- Rollout lokal `0.3.9 → 0.3.11` berhasil end-to-end pada 10 November 2026: command diterima,
+  MSI terverifikasi, instalasi automatic ketika idle, service restart, dan heartbeat versi baru
+  mengubah deployment menjadi `installed`.
+- Hub menolak internal release untuk Agent di bawah `0.3.12`, sehingga rollout selalu memasang
+  Authenticode bridge lebih dulu. Release `0.3.13+` membawa signature, key ID, size, channel, dan
+  SHA-256 dalam command; private key tidak pernah berada di Hub.
+- Rollout lokal `0.3.11 → 0.3.12` (bridge Authenticode) dan `0.3.12 → 0.3.13` (MSI tanpa
+  Authenticode, manifest internal) berhasil pada 12 November 2026. Keduanya mencapai `installed`
+  setelah heartbeat mengonfirmasi target version; service Windows tetap `Running`.
 
 ### Source, job, dan callback
 
 - Source Connection CRUD dengan credential terenkripsi.
-- Aksi Test connection dengan diagnosis auth, endpoint, HTTP, dan jaringan.
+- Source Connection baru selalu inactive dengan identity status `pending`. Aksi `Verify
+  identity` memanggil `GET {base_url}/identity` memakai Basic Auth dan hanya menghasilkan
+  status `verified` bila `integration_id` remote sama persis dengan tenant Hub.
+- Identity verification bersifat fail-closed: `pending`, `mismatch`, `unavailable`, atau
+  perubahan URL/credential memblokir create/sync/activation binding, source pull, claim
+  queued job, status printer, dan callback. Binding terkait ikut dinonaktifkan.
+- Respons `/identity` yang wajib adalah JSON `{"integration_id":"<UUID Hub>"}`. HTTP
+  401/403, 404, respons tanpa UUID valid, jaringan gagal, dan UUID tenant lain mendapat
+  diagnosis berbeda dan tidak dapat dipakai secara operasional.
 - Create/edit Printer Binding otomatis disinkronkan ke endpoint legacy `/printerName`.
 - Sinkronisasi mengirim nama/alias lama dan baru sesuai kontrak autoprint lama; binding
   lokal tidak disimpan bila Opsifin menolak request atau tidak dapat dijangkau.
@@ -49,8 +95,47 @@ Dokumen ini menjadi handoff ringkas untuk Codex/agent berikutnya. Baca `AGENTS.m
 - Tabel Printer Bindings menyediakan aksi `Sync to Opsifin` untuk menyinkronkan ulang
   binding lama tanpa mengubah datanya.
 - Pull `/getData`, dedupe job, validasi PDF, snapshot, SHA-256, dan page count.
+- Source pull sekarang busy-aware per Printer Binding. Binding yang masih memiliki job
+  `received`/`queued`/`claimed`/`printing` atau callback `pending` tidak memanggil
+  `/getData` lagi; binding dan tenant lain tetap diproses. Setelah batch terminal dan
+  callback terkirim, binding yang masih due langsung dapat ditarik pada tick scheduler
+  berikutnya. Ini mencegah payload `Process` legacy berulang memenuhi limit 50 dan menambah
+  event duplicate tanpa meningkatkan throughput printer.
+- Download PDF menormalkan hanya UTF-8 BOM/whitespace aman maksimal 16 byte sebelum
+  `%PDF-`. Snapshot, ukuran, dan SHA-256 dihitung dari dokumen yang sudah kanonis agar
+  Agent tetap dapat memakai validasi header ketat. HTML atau prefix non-whitespace tetap
+  ditolak sebagai `PDF_INVALID`; tidak ada request, query, atau worker tambahan.
+- Scheduler `hub:pull-sources` dapat menemukan binding jatuh tempo tanpa TenantContext,
+  tetapi tetap mencocokkan `tenant_id` binding dan Source Connection secara eksplisit
+  sebelum memasang context. Regression test mencakup pull dua tenant dalam satu proses.
 - Claim dengan lease, signed document download, event idempoten, dan state machine job.
+- Hub tidak pernah menjalankan retry otomatis setelah Agent melaporkan `spooled`. Error pada
+  tahap itu bersifat ambigu karena kertas mungkin sudah keluar; job dihentikan sebagai `failed`
+  untuk pemeriksaan operator. Guard ini mencegah invoice tercetak dua kali walaupun Agent lama
+  salah mengklasifikasikan race pembacaan JobId spooler.
+- Scheduler melepaskan lease `claimed`/`printing` yang kedaluwarsa setiap 10 detik,
+  menutup attempt lama dengan outcome `lease_expired`, lalu mengembalikan job ke `queued`
+  agar satu printer tidak terkunci permanen.
 - Callback outbox dengan retry/backoff ke opsifin-main.
+- Job `failed` memiliki dua aksi manual dengan alasan wajib: `Retry printing` memakai
+  snapshot PDF tersimpan, sedangkan `Refetch and retry` mengunduh dan memvalidasi PDF
+  baru dari Opsifin. Keduanya mempertahankan job, dokumen lama, attempt, dan timeline.
+- Setiap manual retry menaikkan print run, menulis event `reprint_requested` dan audit log,
+  lalu kembali ke `queued`. Callback lama tidak ditimpa; setiap run memiliki callback
+  terpisah dan callback pending dari run lama ditandai `superseded` agar tidak berlomba.
+- Modal `Retry printing` dan `Refetch and retry` mewajibkan pemilihan destination binding
+  aktif. Pilihan dibatasi ke tenant dan Source Connection asal yang sama; ketika retry
+  berhasil, `binding_id` dan `printer_id` job dipindahkan bersama dalam satu transaksi.
+  Event dan audit menyimpan binding/printer lama serta baru, sehingga job historis dari
+  binding inactive dapat diarahkan ke printer pengganti tanpa mengaktifkan route lama.
+- `Refetch and retry` tidak lagi menahan request Livewire selama Opsifin menghasilkan PDF.
+  Submit membuat `print_job_retry_requests` persistent lalu Horizon mengunduh, memvalidasi,
+  menyimpan snapshot, dan mengantrekan job. Request aktif mencegah klik ganda; kegagalan
+  background tersimpan dan job tetap `failed`, sedangkan sukses mengubahnya ke `queued`
+  dalam transaksi yang sama dengan status request `succeeded`.
+- Manual retry hanya tersedia untuk Platform Admin, Tenant Admin, dan Operator pada
+  tenant yang sama, serta ditolak bila lease masih aktif, binding/source belum siap,
+  atau printer tidak aktif.
 
 ### Admin Panel
 
@@ -75,12 +160,32 @@ Dokumen ini menjadi handoff ringkas untuk Codex/agent berikutnya. Baca `AGENTS.m
   Outbox, dan Audit Logs menggunakan route bertingkat di bawah tenant master.
 - Tenant Overview menjadi pintu masuk menuju seluruh resource tenant dan menampilkan
   jumlah estate yang dikelola serta topology Site → Agent PC → Windows Printer.
+- Navigasi resource tenant pada halaman Overview menggunakan top tabs yang dapat digeser,
+  menggantikan deretan action button; Edit dan Archive tetap menjadi header action.
+- Menu global `Documentation` menjadi handbook internal di aplikasi. Isinya menjelaskan
+  ownership setiap modul, model operasional sederhana Trust → Fleet → Route → Operate,
+  flow end-to-end dan responsibility lanes, safety model tenant/routing, alasan tech stack,
+  onboarding user guide, serta failure handling termasuk dua mode manual retry.
+- Detail Print Job, Agent, Callback Outbox, dan Audit Log dibuka sebagai modal lebar dari
+  tabel agar operator tidak kehilangan filter dan posisi daftar. Route halaman detail
+  terpisah dihapus; Tenant Overview tetap halaman karena merupakan konteks induk.
+- Job Summary untuk setiap status yang memiliki dokumen menampilkan link **Download PDF** menuju snapshot yang
+  benar-benar dikirim ke Agent. URL berlaku lima menit, memerlukan sesi login, dan endpoint
+  memverifikasi membership serta kecocokan tenant sebelum mengalirkan file tanpa cache.
+- Job Summary juga menampilkan **Source document URL** asli dari Opsifin sebagai teks
+  monospace yang dapat disalin dan dibuka. Hanya skema HTTP(S) yang dijadikan link aktif.
+- Modal Print Job menampilkan timeline append-only dalam panel scroll berukuran tetap,
+  urutan event terbaru di atas, reason/mode retry langsung terbaca, dan payload teknis
+  collapsed. History tetap lengkap tanpa membuat modal memanjang tanpa batas.
 - Internal Team & Access mengelola akun tim Opsifin, status Platform Admin, serta role
   tenant_admin/operator/viewer per tenant. Client tidak boleh dibuat sebagai user Hub.
 - Platform Settings saat ini merupakan halaman read-only untuk fakta control plane dan
   safety boundary; secret environment tidak ditampilkan.
 - Akun internal lokal `admin@opsifin.com` sudah ditetapkan sebagai Platform Admin agar
   menu tenant management, Internal Team & Access, dan Platform Settings dapat digunakan.
+- Data onboarding lokal dikosongkan atas permintaan user pada 2026-11-04: tenant `ACME`
+  dan `tenantlocalhost` beserta membership, site, Agent, printer, Source Connection,
+  binding, audit, dan dokumen tenant dihapus permanen. Akun Platform Admin dipertahankan.
 - Model Tenant memakai `code` sebagai route key. Tombol Open tenant sekarang menghasilkan
   URL `/admin/tenants/ACME`, bukan UUID yang sebelumnya menyebabkan halaman 404.
 - Tombol Tenant Overview menyebut halaman child `index` secara eksplisit. Connections,
@@ -91,6 +196,13 @@ Dokumen ini menjadi handoff ringkas untuk Codex/agent berikutnya. Baca `AGENTS.m
 - Sites, Agents, Printers, dan Printer Bindings.
 - Audit Log append-only untuk perubahan konfigurasi; secret selalu disamarkan.
 - Seluruh label, notifikasi, empty state, API error, dan output command menggunakan English.
+- Timestamp relatif pada tabel operasional selalu disertai jam lokal, misalnya
+  `6 minutes ago · 18:00`; tanggal ikut ditampilkan untuk hari sebelumnya agar operator
+  tidak perlu membuka tooltip untuk mengetahui waktu aktual.
+- Seluruh row action pada 11 tabel admin kini diringkas ke satu tombol **Actions** dengan
+  dropdown auto-placement. Aksi operasional, edit, detail, retry, sync, dan destructive
+  action tetap mempertahankan permission serta confirmation masing-masing tanpa memperlebar
+  tabel atau memaksa horizontal scroll hanya untuk mencapai CTA.
 
 ### Perbaikan tenancy Livewire
 
@@ -131,42 +243,64 @@ Dokumen ini menjadi handoff ringkas untuk Codex/agent berikutnya. Baca `AGENTS.m
 - Delete permanen hanya diizinkan untuk Agent revoked yang belum memiliki printer.
 - Agent revoked disembunyikan secara default; tersedia melalui filter Revoked/All statuses.
 
+### Availability printer
+
+- Availability printer di UI tidak lagi memakai nilai mentah heartbeat sebagai kebenaran
+  tunggal. Status efektif mengikuti presence Agent: `Agent stale` setelah 90 detik tanpa
+  heartbeat, `Agent offline` setelah 180 detik, dan `Agent revoked` setelah akses dicabut.
+- Nilai mentah printer terakhir tetap disimpan dan ditampilkan sebagai `Last report` agar
+  troubleshooting driver/spooler tetap memiliki bukti, tanpa menyesatkan operator bahwa
+  printer masih dapat dijangkau.
+- Daftar Printer, topology Tenant Overview, filter Availability, dan counter problem
+  printer pada dashboard memakai availability efektif. Tabel Printer polling setiap 10
+  detik sehingga perubahan waktu tampil tanpa mengubah histori heartbeat.
+- Saat TenantContext tidak tersedia, availability menjadi `Unknown` (fail-safe), bukan
+  menganggap laporan lama `ONLINE` masih valid atau melewati tenant scope.
+- Simulation mode menyelesaikan spool sekitar 1–2 detik, tetapi tetap menjalankan jendela
+  verifikasi pasca-spool 60 detik sebelum event `completed`. Delay ini disengaja dan sama
+  dengan printer fisik untuk menghindari status sukses palsu akibat error sesaat setelah spool.
+
 ### Pairing ulang dan deduplikasi
 
 - `(tenant_id, machine_id)` memiliki unique constraint.
 - Pairing ulang PC yang sama memakai Agent ID lama, mengganti secret, membuka revoke,
   mempertahankan printer/history, dan menunggu heartbeat baru.
 - Migrasi `000400` menggabungkan Agent dan printer duplikat beserta referensinya.
-- Cleanup database user sudah dijalankan:
+- Cleanup deduplikasi berikut adalah catatan historis sebelum data onboarding lokal
+  dikosongkan pada 2026-11-04:
   - Agent lama yang dihapus: `01a19b4c-c1a3-7106-933a-8858f30ff74d`
   - Agent aktif yang dipertahankan: `01a19baf-2b6f-7398-a076-e40d7f86199f`
   - Hostname: `ADITYA-PRASETYO`
   - Machine ID: `66cbd80b-5b2e-48f9-9f5f-c06960d071ec`
   - Tujuh printer sekarang menunjuk ke Agent aktif; satu printer lama dipertahankan Offline.
-- User mengonfirmasi koneksi Agent ↔ Hub berhasil.
+- User sebelumnya mengonfirmasi koneksi Agent ↔ Hub berhasil; Agent harus pairing ulang
+  setelah tenant baru dibuat.
 
 ## Alur operasional berikutnya
 
-1. Pastikan Agent tampil Online dan printer fisik muncul di Fleet → Printers.
-2. Aktifkan hanya printer fisik yang akan dipakai dan atur alias/print settings.
-3. Buat Printer Binding menggunakan Source Connection, destination printer,
+1. Buat Tenant, lalu salin Integration ID Hub ke opsifin-main client yang tepat.
+2. Buat Source Connection dalam keadaan inactive dan jalankan `Verify identity`.
+3. Setelah status `Verified`, aktifkan Source Connection.
+4. Buat Site dan pairing Agent; pastikan Agent Online dan printer fisik muncul.
+5. Aktifkan hanya printer fisik yang akan dipakai dan atur alias/print settings.
+6. Buat Printer Binding menggunakan Source Connection, destination printer,
    source PrinterName, source Identifier, dan Printer Version.
-4. Simpan binding dalam keadaan Inactive.
-5. Hentikan autoprint lama untuk kombinasi tersebut agar tidak terjadi cetak ganda.
-6. Aktifkan binding dan pantau Operations → Print Jobs serta Callback Outbox.
+7. Simpan binding dalam keadaan Inactive.
+8. Hentikan autoprint lama untuk kombinasi tersebut agar tidak terjadi cetak ganda.
+9. Aktifkan binding dan pantau Operations → Print Jobs serta Callback Outbox.
 
 ## Pekerjaan penting yang belum selesai
 
-- Endpoint `/identity` di opsifin-main dan verifikasi otomatis bahwa `integration_id`
-  Source Connection cocok dengan tenant Hub. Untuk saat ini UUID dari Hub disalin secara
-  manual ketika endpoint tersebut sudah ditambahkan di opsifin-main.
+- Endpoint `/identity` lokal sudah dapat diverifikasi oleh Hub. Implementasi pada setiap
+  instance opsifin-main tenant tetap menjadi prasyarat onboarding.
 - User invitation melalui email dan mandatory 2FA untuk admin.
 - Rotasi secret Agent terjadwal; pairing ulang baru menangani penggantian secret manual.
-- Manual reprint dan cancel job dari panel.
-- Recovery otomatis lease kedaluwarsa.
+- Cancel job dari panel.
 - Alert operasional Agent offline/printer error/job failed/callback failed.
 - Laporan dan ekspor CSV (P1).
 - Verifikasi end-to-end cetak PDF dan spooler pada printer fisik nyata.
+- Uji instalasi manual pertama pada clean Windows VM untuk mendokumentasikan alur
+  `More info → Run anyway` dan kebutuhan whitelist pada policy perusahaan yang ketat.
 - Benchmark/pilot produksi, backup-restore, TLS, dan runbook rollout.
 
 ## Catatan desain penting
@@ -181,5 +315,8 @@ Dokumen ini menjadi handoff ringkas untuk Codex/agent berikutnya. Baca `AGENTS.m
 - Jangan hard-delete Agent yang memiliki printer/history; gunakan revoke dan filter arsip.
 - Pairing ulang harus selalu reuse berdasarkan tenant + machine_id.
 - Jangan mengaktifkan binding sebelum autoprint lama dihentikan.
+- Endpoint legacy `/getData` opsifin-main saat ini hanya memproses `VersionAPI=2`.
+  Source Connection lokal harus memakai API version 2; version 1 menghasilkan array
+  kosong walaupun terdapat invoice yang cocok.
 - Raw query hanya boleh berada di repository domain atau migration sesuai aturan arsitektur.
 - Baca PRD sebelum mengubah state machine, lease, callback, atau tenancy.

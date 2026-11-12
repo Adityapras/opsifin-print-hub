@@ -33,6 +33,11 @@ final class JobClaimService
                 'attempt_id' => $attempt->getKey(),
                 'printer_id' => $job->printer_id,
                 'lease_until' => $job->lease_until->utc()->toIso8601String(),
+                'display' => [
+                    'invoice_no' => $job->inv_no,
+                    'item_type' => $job->item_type,
+                    'received_at' => $job->received_at->utc()->toIso8601String(),
+                ],
                 'document' => [
                     'url' => URL::temporarySignedRoute(
                         'agent.v1.documents.show',

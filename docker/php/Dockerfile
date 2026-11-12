@@ -6,7 +6,7 @@ COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 
 RUN install-php-extensions pdo_mysql redis intl zip pcntl bcmath opcache \
     && apt-get update \
-    && apt-get install -y --no-install-recommends git unzip default-mysql-client \
+    && apt-get install -y --no-install-recommends git unzip default-mysql-client osslsigncode msitools \
     && rm -rf /var/lib/apt/lists/*
 
 ENV COMPOSER_HOME=/tmp/composer

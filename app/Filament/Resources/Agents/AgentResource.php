@@ -5,21 +5,26 @@ namespace App\Filament\Resources\Agents;
 use App\Domain\Fleet\Models\Agent;
 use App\Domain\Fleet\Services\AgentCommandService;
 use App\Domain\Fleet\Services\AgentControlService;
+use App\Domain\Fleet\Services\AgentUpdateRolloutService;
+use App\Domain\Platform\Models\AgentRelease;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Services\TenantContext;
 use App\Filament\Resources\Agents\Pages\ListAgents;
-use App\Filament\Resources\Agents\Pages\ViewAgent;
 use App\Filament\Resources\Tenants\TenantResource;
 use App\Models\User;
+use App\Support\DateTimeDisplay;
 use BackedEnum;
 use Filament\Actions\Action;
+use Filament\Actions\ActionGroup;
 use Filament\Actions\ViewAction;
 use Filament\Facades\Filament;
+use Filament\Forms\Components\Select;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
+use Filament\Support\Enums\Width;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
@@ -108,7 +113,7 @@ final class AgentResource extends Resource
                     ->color('gray'),
                 TextColumn::make('last_seen_at')
                     ->label('Last seen')
-                    ->since(fn (): string => self::tenantTimezone())
+                    ->formatStateUsing(fn (mixed $state): string => DateTimeDisplay::relativeWithClock($state, self::tenantTimezone()))
                     ->placeholder('Never')
                     ->tooltip(fn (Agent $record): ?string => $record->last_seen_at?->timezone(self::tenantTimezone())->format('d M Y, H:i:s'))
                     ->sortable(),
@@ -153,62 +158,115 @@ final class AgentResource extends Resource
             ->defaultSort('last_seen_at', 'desc')
             ->poll('10s')
             ->recordActions([
-                Action::make('uploadLogs')
-                    ->label('Request logs')
-                    ->icon(Heroicon::OutlinedArrowUpTray)
-                    ->visible(fn (Agent $record): bool => self::canManageFleet() && $record->revoked_at === null)
-                    ->requiresConfirmation()
-                    ->modalDescription('The command will be sent on the next Agent heartbeat and request logs from the last 24 hours.')
-                    ->action(function (Agent $record, AgentCommandService $commands): void {
-                        $commands->dispatch($record, 'upload_logs', ['hours' => 24]);
+                ActionGroup::make([
+                    Action::make('scheduleUpdate')
+                        ->label('Schedule update')
+                        ->icon(Heroicon::OutlinedCloudArrowUp)
+                        ->color('info')
+                        ->visible(fn (Agent $record): bool => self::canManageFleet() && $record->revoked_at === null)
+                        ->schema([
+                            Select::make('release_id')
+                                ->label('Target release')
+                                ->options(fn (Agent $record): array => AgentRelease::query()
+                                    ->where('status', AgentRelease::STATUS_PUBLISHED)
+                                    ->orderByDesc('published_at')
+                                    ->get()
+                                    ->filter(fn (AgentRelease $release): bool => version_compare($record->version, $release->version, '<'))
+                                    ->mapWithKeys(fn (AgentRelease $release): array => [$release->getKey() => "{$release->version} · {$release->channel}"])
+                                    ->all())
+                                ->helperText(fn (Agent $record): string => "Installed version: {$record->version}")
+                                ->searchable()
+                                ->required(),
+                            Select::make('install_policy')
+                                ->label('Install policy')
+                                ->options([
+                                    'automatic' => 'Install automatically when Agent is idle',
+                                    'manual' => 'Download only; user installs from Agent UI',
+                                ])
+                                ->default('automatic')
+                                ->native(false)
+                                ->required(),
+                        ])
+                        ->modalHeading(fn (Agent $record): string => "Update {$record->hostname}")
+                        ->modalDescription('The Agent verifies SHA-256 and Authenticode before installation. Active print work is never interrupted by the when-idle policy.')
+                        ->action(function (Agent $record, array $data, AgentUpdateRolloutService $rollout): void {
+                            $release = AgentRelease::query()->findOrFail($data['release_id']);
+                            /** @var User $actor */
+                            $actor = Filament::auth()->user();
+                            $rollout->scheduleOne($release, $record, $actor, $data['install_policy']);
 
-                        Notification::make()
-                            ->title('Log request scheduled')
-                            ->body("Agent {$record->hostname} will upload logs on its next heartbeat.")
-                            ->success()
-                            ->send();
-                    }),
-                Action::make('revoke')
-                    ->label('Revoke access')
-                    ->icon(Heroicon::OutlinedNoSymbol)
-                    ->color('danger')
-                    ->visible(fn (Agent $record): bool => self::canManageFleet() && $record->revoked_at === null)
-                    ->requiresConfirmation()
-                    ->modalHeading('Revoke Agent access?')
-                    ->modalDescription('The current device token will be rejected immediately. Its printers and operational history will be retained.')
-                    ->action(function (Agent $record, AgentControlService $agents): void {
-                        $agents->revoke($record);
+                            Notification::make()
+                                ->title('Agent update scheduled')
+                                ->body("{$record->hostname} will receive Agent {$release->version} on its next heartbeat.")
+                                ->success()
+                                ->send();
+                        }),
+                    Action::make('uploadLogs')
+                        ->label('Request logs')
+                        ->icon(Heroicon::OutlinedArrowUpTray)
+                        ->visible(fn (Agent $record): bool => self::canManageFleet() && $record->revoked_at === null)
+                        ->requiresConfirmation()
+                        ->modalDescription('The command will be sent on the next Agent heartbeat and request logs from the last 24 hours.')
+                        ->action(function (Agent $record, AgentCommandService $commands): void {
+                            $commands->dispatch($record, 'upload_logs', ['hours' => 24]);
 
-                        Notification::make()
-                            ->title('Agent access revoked')
-                            ->body("{$record->hostname} can no longer authenticate to the Hub.")
-                            ->success()
-                            ->send();
-                    }),
-                Action::make('deleteUnused')
-                    ->label('Delete permanently')
-                    ->icon(Heroicon::OutlinedTrash)
-                    ->color('danger')
-                    ->visible(fn (Agent $record): bool => self::canManageFleet() && $record->revoked_at !== null)
-                    ->disabled(fn (Agent $record): bool => $record->printers()->exists())
-                    ->tooltip(fn (Agent $record): ?string => $record->printers()->exists()
-                        ? 'Agents with discovered printers are retained to protect bindings and job history.'
-                        : null)
-                    ->requiresConfirmation()
-                    ->modalHeading('Delete this Agent permanently?')
-                    ->modalDescription('Only revoked Agents without discovered printers can be deleted. This action cannot be undone.')
-                    ->action(function (Agent $record, AgentControlService $agents): void {
-                        $deleted = $agents->deleteUnused($record);
+                            Notification::make()
+                                ->title('Log request scheduled')
+                                ->body("Agent {$record->hostname} will upload logs on its next heartbeat.")
+                                ->success()
+                                ->send();
+                        }),
+                    Action::make('revoke')
+                        ->label('Revoke access')
+                        ->icon(Heroicon::OutlinedNoSymbol)
+                        ->color('danger')
+                        ->visible(fn (Agent $record): bool => self::canManageFleet() && $record->revoked_at === null)
+                        ->requiresConfirmation()
+                        ->modalHeading('Revoke Agent access?')
+                        ->modalDescription('The current device token will be rejected immediately. Its printers and operational history will be retained.')
+                        ->action(function (Agent $record, AgentControlService $agents): void {
+                            $agents->revoke($record);
 
-                        Notification::make()
-                            ->title($deleted ? 'Agent deleted' : 'Agent cannot be deleted')
-                            ->body($deleted
-                                ? 'The unused Agent record was removed permanently.'
-                                : 'Revoke the Agent first and ensure it has no discovered printers.')
-                            ->color($deleted ? 'success' : 'danger')
-                            ->send();
-                    }),
-                ViewAction::make(),
+                            Notification::make()
+                                ->title('Agent access revoked')
+                                ->body("{$record->hostname} can no longer authenticate to the Hub.")
+                                ->success()
+                                ->send();
+                        }),
+                    Action::make('deleteUnused')
+                        ->label('Delete permanently')
+                        ->icon(Heroicon::OutlinedTrash)
+                        ->color('danger')
+                        ->visible(fn (Agent $record): bool => self::canManageFleet() && $record->revoked_at !== null)
+                        ->disabled(fn (Agent $record): bool => $record->printers()->exists())
+                        ->tooltip(fn (Agent $record): ?string => $record->printers()->exists()
+                            ? 'Agents with discovered printers are retained to protect bindings and job history.'
+                            : null)
+                        ->requiresConfirmation()
+                        ->modalHeading('Delete this Agent permanently?')
+                        ->modalDescription('Only revoked Agents without discovered printers can be deleted. This action cannot be undone.')
+                        ->action(function (Agent $record, AgentControlService $agents): void {
+                            $deleted = $agents->deleteUnused($record);
+
+                            Notification::make()
+                                ->title($deleted ? 'Agent deleted' : 'Agent cannot be deleted')
+                                ->body($deleted
+                                    ? 'The unused Agent record was removed permanently.'
+                                    : 'Revoke the Agent first and ensure it has no discovered printers.')
+                                ->color($deleted ? 'success' : 'danger')
+                                ->send();
+                        }),
+                    ViewAction::make()
+                        ->label('Details')
+                        ->modalHeading(fn (Agent $record): string => "Agent details · {$record->hostname}")
+                        ->modalDescription('Review device identity and health without leaving the fleet list.')
+                        ->modalWidth(Width::FiveExtraLarge),
+                ])
+                    ->label('Actions')
+                    ->icon(Heroicon::OutlinedEllipsisVertical)
+                    ->color('gray')
+                    ->button()
+                    ->dropdownAutoPlacement(),
             ])
             ->emptyStateHeading('No agents yet')
             ->emptyStateDescription('Use Create pairing code to install the first Print Agent.')
@@ -219,7 +277,6 @@ final class AgentResource extends Resource
     {
         return [
             'index' => ListAgents::route('/'),
-            'view' => ViewAgent::route('/{record}'),
         ];
     }
 

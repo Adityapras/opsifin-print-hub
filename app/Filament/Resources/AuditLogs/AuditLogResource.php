@@ -6,14 +6,15 @@ use App\Domain\Audit\Models\AuditLog;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Services\TenantContext;
 use App\Filament\Resources\AuditLogs\Pages\ListAuditLogs;
-use App\Filament\Resources\AuditLogs\Pages\ViewAuditLog;
 use App\Filament\Resources\Tenants\TenantResource;
 use BackedEnum;
+use Filament\Actions\ActionGroup;
 use Filament\Actions\ViewAction;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
+use Filament\Support\Enums\Width;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
@@ -121,7 +122,18 @@ final class AuditLogResource extends Resource
             ])
             ->defaultSort('occurred_at', 'desc')
             ->recordActions([
-                ViewAction::make(),
+                ActionGroup::make([
+                    ViewAction::make()
+                        ->label('Details')
+                        ->modalHeading('Activity details')
+                        ->modalDescription('Inspect the audited change without leaving the activity list.')
+                        ->modalWidth(Width::SevenExtraLarge),
+                ])
+                    ->label('Actions')
+                    ->icon(Heroicon::OutlinedEllipsisVertical)
+                    ->color('gray')
+                    ->button()
+                    ->dropdownAutoPlacement(),
             ])
             ->emptyStateHeading('No configuration changes yet')
             ->emptyStateDescription('Connection, binding, site, and printer changes are recorded automatically.')
@@ -132,7 +144,6 @@ final class AuditLogResource extends Resource
     {
         return [
             'index' => ListAuditLogs::route('/'),
-            'view' => ViewAuditLog::route('/{record}'),
         ];
     }
 

@@ -48,6 +48,7 @@ it('menukar pairing code sekali pakai dengan identitas dan secret agent', functi
         ->assertJsonPath('site_id', $site->getKey())
         ->assertJsonPath('config.claim_interval_s', 5)
         ->assertJsonPath('config.heartbeat_interval_s', 30)
+        ->assertJsonPath('config.source_poll_interval_s', null)
         ->assertJsonPath('config.printers', []);
 
     $agent = Agent::withoutGlobalScopes()->sole();

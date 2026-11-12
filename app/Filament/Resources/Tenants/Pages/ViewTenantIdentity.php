@@ -4,7 +4,6 @@ namespace App\Filament\Resources\Tenants\Pages;
 
 use App\Domain\Tenancy\Models\Tenant;
 use App\Filament\Resources\Tenants\TenantResource;
-use Filament\Actions\Action;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\Pages\ViewRecord;
 use Filament\Schemas\Components\Section;
@@ -52,15 +51,5 @@ final class ViewTenantIdentity extends ViewRecord
                         ->color('info'),
                 ]),
         ]);
-    }
-
-    protected function getHeaderActions(): array
-    {
-        return [
-            Action::make('overview')
-                ->label('Back to overview')
-                ->icon(Heroicon::OutlinedArrowLeft)
-                ->url(TenantResource::getUrl('view', ['record' => $this->record])),
-        ];
     }
 }

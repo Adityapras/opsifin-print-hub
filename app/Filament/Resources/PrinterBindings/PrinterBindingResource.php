@@ -12,8 +12,10 @@ use App\Filament\Resources\PrinterBindings\Pages\EditPrinterBinding;
 use App\Filament\Resources\PrinterBindings\Pages\ListPrinterBindings;
 use App\Filament\Resources\Tenants\TenantResource;
 use App\Models\User;
+use App\Support\DateTimeDisplay;
 use BackedEnum;
 use Filament\Actions\Action;
+use Filament\Actions\ActionGroup;
 use Filament\Actions\EditAction;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\Select;
@@ -125,7 +127,7 @@ final class PrinterBindingResource extends Resource
                     ->boolean(),
                 TextColumn::make('last_pulled_at')
                     ->label('Last pull')
-                    ->since(fn (): string => self::tenantTimezone())
+                    ->formatStateUsing(fn (mixed $state): string => DateTimeDisplay::relativeWithClock($state, self::tenantTimezone()))
                     ->placeholder('Never')
                     ->sortable(),
                 TextColumn::make('last_error')
@@ -146,31 +148,38 @@ final class PrinterBindingResource extends Resource
             ])
             ->defaultSort('source_printer_name')
             ->recordActions([
-                Action::make('syncToOpsifin')
-                    ->label('Sync to Opsifin')
-                    ->icon(Heroicon::OutlinedArrowPath)
-                    ->visible(fn (): bool => self::canManageConfiguration())
-                    ->requiresConfirmation()
-                    ->modalDescription('Send this binding to the legacy printerName endpoint now. Use this for bindings created before automatic synchronization was enabled.')
-                    ->action(function (PrinterBinding $record, PrinterBindingService $bindings): void {
-                        try {
-                            $bindings->syncExisting($record);
+                ActionGroup::make([
+                    Action::make('syncToOpsifin')
+                        ->label('Sync to Opsifin')
+                        ->icon(Heroicon::OutlinedArrowPath)
+                        ->visible(fn (): bool => self::canManageConfiguration())
+                        ->requiresConfirmation()
+                        ->modalDescription('Send this binding to the legacy printerName endpoint now. Use this for bindings created before automatic synchronization was enabled.')
+                        ->action(function (PrinterBinding $record, PrinterBindingService $bindings): void {
+                            try {
+                                $bindings->syncExisting($record);
 
-                            Notification::make()
-                                ->title('Printer binding synchronized')
-                                ->body("{$record->source_printer_name} is registered in Opsifin.")
-                                ->success()
-                                ->send();
-                        } catch (PrinterBindingSyncException $exception) {
-                            Notification::make()
-                                ->title('Printer binding sync failed')
-                                ->body($exception->getMessage())
-                                ->danger()
-                                ->persistent()
-                                ->send();
-                        }
-                    }),
-                EditAction::make(),
+                                Notification::make()
+                                    ->title('Printer binding synchronized')
+                                    ->body("{$record->source_printer_name} is registered in Opsifin.")
+                                    ->success()
+                                    ->send();
+                            } catch (PrinterBindingSyncException $exception) {
+                                Notification::make()
+                                    ->title('Printer binding sync failed')
+                                    ->body($exception->getMessage())
+                                    ->danger()
+                                    ->persistent()
+                                    ->send();
+                            }
+                        }),
+                    EditAction::make(),
+                ])
+                    ->label('Actions')
+                    ->icon(Heroicon::OutlinedEllipsisVertical)
+                    ->color('gray')
+                    ->button()
+                    ->dropdownAutoPlacement(),
             ])
             ->emptyStateHeading('No printer bindings yet')
             ->emptyStateDescription('The Hub will not pull jobs until a printer is connected to a source.')

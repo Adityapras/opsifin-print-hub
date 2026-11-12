@@ -7,6 +7,9 @@ use App\Domain\Fleet\Models\Agent;
 use App\Domain\Fleet\Models\Printer;
 use App\Domain\Jobs\Enums\PrintJobState;
 use App\Domain\Jobs\Models\PrintJob;
+use App\Domain\Tenancy\Models\Tenant;
+use App\Domain\Tenancy\Services\TenantContext;
+use App\Support\DateTimeDisplay;
 use Filament\Support\Icons\Heroicon;
 use Filament\Widgets\StatsOverviewWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
@@ -27,7 +30,7 @@ final class OperationsOverview extends StatsOverviewWidget
     {
         $problemPrinters = Printer::query()
             ->where('is_active', true)
-            ->whereNotIn('status', ['ONLINE', 'READY', 'IDLE'])
+            ->withEffectiveIssue()
             ->count();
         $offlineAgents = Agent::query()
             ->where(function ($query): void {
@@ -70,11 +73,23 @@ final class OperationsOverview extends StatsOverviewWidget
                 ->descriptionIcon($pendingCallbacks > 0 ? Heroicon::OutlinedClock : Heroicon::OutlinedCheckCircle)
                 ->color($pendingCallbacks > 0 ? 'warning' : 'success')
                 ->icon(Heroicon::OutlinedPaperAirplane),
-            Stat::make('Oldest queued job', $oldestQueued?->received_at?->diffForHumans(short: true) ?? '—')
+            Stat::make(
+                'Oldest queued job',
+                $oldestQueued === null
+                    ? '—'
+                    : DateTimeDisplay::relativeWithClock($oldestQueued->received_at, $this->tenantTimezone()),
+            )
                 ->description($oldestQueued === null ? 'Queue is empty' : $oldestQueued->inv_no)
                 ->descriptionIcon($oldestQueued === null ? Heroicon::OutlinedCheckCircle : Heroicon::OutlinedQueueList)
                 ->color($oldestQueued === null ? 'success' : 'warning')
                 ->icon(Heroicon::OutlinedQueueList),
         ];
+    }
+
+    private function tenantTimezone(): string
+    {
+        $tenant = app(TenantContext::class)->tenant();
+
+        return $tenant instanceof Tenant ? $tenant->timezone : 'UTC';
     }
 }
