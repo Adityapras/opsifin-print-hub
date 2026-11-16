@@ -26,17 +26,29 @@ final class JobClaimRepository
                 ->whereIn('id', $printerIds)
                 ->where('is_active', true)
                 ->where('is_paused', false)
-                ->get();
+                ->orderBy('id')
+                ->get(['id']);
 
             $claimed = [];
 
             foreach ($printers as $printer) {
-                if ($this->printerHasActiveJob($printer)) {
+                // MySQL 5.7 belum mendukung SKIP LOCKED. Mengunci baris printer
+                // membuat klaim tetap paralel antar-printer, tetapi serial untuk
+                // printer yang sama agar dua request tidak mengambil dua job.
+                $lockedPrinter = Printer::query()
+                    ->whereKey($printer->getKey())
+                    ->where('agent_id', $agent->getKey())
+                    ->where('is_active', true)
+                    ->where('is_paused', false)
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($lockedPrinter === null || $this->printerHasActiveJob($lockedPrinter)) {
                     continue;
                 }
 
                 $jobQuery = PrintJob::query()
-                    ->where('printer_id', $printer->getKey())
+                    ->where('printer_id', $lockedPrinter->getKey())
                     ->where('state', PrintJobState::Queued)
                     ->whereHas('binding', fn (Builder $query): Builder => $query
                         ->where('is_active', true)
@@ -46,8 +58,7 @@ final class JobClaimRepository
                     ->where('available_at', '<=', now())
                     ->orderBy('received_at');
 
-                $this->lockNextAvailable($jobQuery);
-                $job = $jobQuery->first();
+                $job = $jobQuery->lockForUpdate()->first();
 
                 if ($job === null || $job->document_id === null) {
                     continue;
@@ -99,18 +110,5 @@ final class JobClaimRepository
             ->where('printer_id', $printer->getKey())
             ->whereIn('state', [PrintJobState::Claimed, PrintJobState::Printing])
             ->exists();
-    }
-
-    /** @param Builder<PrintJob> $query */
-    private function lockNextAvailable(Builder $query): void
-    {
-        if (DB::connection()->getDriverName() === 'mysql') {
-            $query->lock('FOR UPDATE SKIP LOCKED');
-
-            return;
-        }
-
-        // SQLite pada test tidak punya row lock; transaksi tetap menguji alur sekuensial.
-        $query->lockForUpdate();
     }
 }

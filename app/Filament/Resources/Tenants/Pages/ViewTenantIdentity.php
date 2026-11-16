@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\Tenants\Pages;
 
 use App\Domain\Tenancy\Models\Tenant;
+use App\Filament\Resources\Tenants\Concerns\HasTenantWorkspaceGuide;
 use App\Filament\Resources\Tenants\TenantResource;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\Pages\ViewRecord;
@@ -12,6 +13,8 @@ use Filament\Support\Icons\Heroicon;
 
 final class ViewTenantIdentity extends ViewRecord
 {
+    use HasTenantWorkspaceGuide;
+
     protected static string $resource = TenantResource::class;
 
     protected static ?string $title = 'Integration Identity';

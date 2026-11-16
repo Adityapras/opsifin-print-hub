@@ -118,7 +118,7 @@ Hanya Hub yang berbicara dengan opsifin-main. Agent tidak pernah memegang creden
 
 **Modul di dalam Hub:** `Tenancy`, `Identity` (user, role, 2FA), `Fleet` (site, agent, printer, binding), `Sources` (adapter opsifin-main v2/v3), `Jobs` (state machine, klaim, retry), `Delivery` (callback outbox), `Notifications`, `Reporting`, `Audit`. Setiap modul punya folder sendiri di `app/Domain/*` dan hanya boleh dipanggil lewat service class publiknya.
 
-**Modul di dalam Agent:** `enroll` (pairing + DPAPI), `heartbeat` (inventaris printer + status), `worker` (klaim, unduh, cetak, pantau spooler), `outbox` (SQLite, kirim ulang event), `updater` (self-update bertanda tangan).
+**Modul di dalam Agent:** `enroll` (pairing + DPAPI), `heartbeat` (inventaris printer + status), `worker` (klaim, unduh, cetak, pantau spooler), `outbox` (SQLite, kirim ulang event), `updater` (self-update dengan SHA-256 dari Hub).
 
 ## Tech stack
 
@@ -129,8 +129,8 @@ Rekomendasinya Laravel + MySQL untuk Hub dan .NET 10 (C#) untuk Agent. Hub memak
 | Backend Hub | Laravel 13 di PHP 8.5 | Tim sudah menguasai PHP (opsifin-main memakai CI3). Ekosistemnya lengkap untuk queue, scheduler, auth, dan encryption. Rilisnya rutin setiap tahun | NestJS (TypeScript): tim harus belajar bahasa baru. Go: terlalu banyak yang harus dibangun untuk CRUD/admin |
 | Admin UI | Filament 5 (di atas Livewire) | Tabel, filter, form, dan dashboard tersedia tanpa membangun SPA, sehingga kode UI berkurang 60-70% | Inertia + React, bila nanti butuh UX yang sangat custom |
 | Real-time UI | Livewire polling 5 detik (v1), Laravel Reverb (v2) | Polling cukup untuk dashboard internal. Reverb adalah WebSocket resmi Laravel bila nanti diperlukan | Pusher / Soketi |
-| Database | MySQL 9.7 LTS | Sama dengan opsifin-main, jadi tim sudah terbiasa mengoperasikan, mem-backup, dan men-tuning. `FOR UPDATE SKIP LOCKED` untuk klaim job, kolom `JSON` untuk payload event, partisi bulanan (`RANGE COLUMNS`) untuk tabel event. Isolasi tenant dijaga di aplikasi + CI karena MySQL tidak punya RLS | PostgreSQL 18: punya RLS dan `jsonb` yang lebih kuat, tetapi tim belum terbiasa mengoperasikannya |
-| Queue, cache, lock | Redis 8 + Laravel Horizon | Antrean untuk worker pull, callback, dan notifikasi, lengkap dengan dashboard retry | Database queue: cukup untuk awal, tetapi lebih lambat |
+| Database | MySQL 5.7 pada network opsifin-main | Memakai infrastruktur yang sudah dioperasikan tim dengan schema dan user khusus Hub. Klaim diserialkan per printer memakai row lock, sementara printer berbeda tetap dapat berjalan paralel. Isolasi tenant dijaga di aplikasi + CI karena MySQL tidak punya RLS | MySQL terpisah atau PostgreSQL: isolasi infrastruktur lebih kuat, tetapi menambah komponen operasional |
+| Queue, cache, lock | MySQL database queue/cache | Volume background saat ini hanya refetch PDF manual. Worker terpisah menjaga UI tetap responsif tanpa menambah Redis/Horizon; lock database mencegah scheduler overlap | Redis + Horizon dipertimbangkan kembali bila jumlah background job atau kebutuhan throughput meningkat |
 | Penyimpanan PDF | Disk lokal (MVP), S3-compatible saat Hub lebih dari 1 instance | Snapshot PDF yang dicetak sebagai bukti, dengan retensi per tenant. Opsifin-main sudah punya config AWS, GCS, dan Azure | Disk lokal: tidak bisa di-scale |
 | Print Agent | .NET 10 LTS Worker Service (Native AOT) | Akses winspool + GDI lewat CsWin32 (generator resmi Microsoft); WMI, DPAPI, dan Windows service host resmi. Biner Native AOT \~15-25 MB tanpa runtime terpisah | Go: biner lebih kecil, tetapi library printernya tidak aktif sejak 2020 dan cetak vektor PDFium butuh cgo |
 | Mesin cetak PDF | PDFium ke GDI printer (vektor, default) + SumatraPDF CLI (`-print-to <printer> -silent`) sebagai cadangan | Tidak bergantung pada asosiasi file `.pdf` di PC (sumber masalah `printto` saat ini). Mesin bisa dipilih per printer dari Hub | ShellExecute printto (kondisi sekarang) |
@@ -138,7 +138,7 @@ Rekomendasinya Laravel + MySQL untuk Hub dan .NET 10 (C#) untuk Agent. Hub memak
 | Credential agent | Windows DPAPI (machine scope) | Device token terenkripsi oleh OS dan tidak bisa dibaca dari PC lain | File plaintext (kondisi saat ini) |
 | Observability | Sentry (error), Laravel Pulse (performa), log JSON terstruktur | Cukup untuk tim kecil. OpenTelemetry bisa ditambahkan kemudian | Stack Grafana penuh |
 | Deployment | Docker Compose atau container di cloud yang ada; GitHub Actions untuk CI | Selaras dengan `docker-compose.yml` yang sudah ada di opsifin-main | Kubernetes: berlebihan untuk skala ini |
-| Installer agent | MSI (WiX) + signature release internal Opsigo | OTA tetap terautorisasi tanpa biaya certificate publik; instalasi pertama dapat menampilkan SmartScreen | Inno Setup |
+| Installer agent | MSI (WiX) + SHA-256 yang dihitung Hub | Alur release sederhana; Agent memverifikasi integritas paket setelah download HTTPS terautentikasi | Inno Setup |
 
 **Kenapa tidak lebih sederhana:** sistem tanpa agent tidak mungkin, karena printer berada di LAN lokasi dan tidak bisa dijangkau dari cloud.
 
@@ -176,7 +176,7 @@ Satu database bersama dipakai, dan setiap tabel bisnis punya kolom `tenant_id` y
 - Semua perubahan konfigurasi masuk `audit_logs`: siapa, kapan, nilai lama dan baru, dengan secret disamarkan.
 - Rate limit per agent (60 req/menit) dan per user.
 - Agent hanya membuka koneksi keluar (HTTPS 443). Tidak ada port masuk di PC lokasi.
-- Update agent hanya diterima bila checksum cocok dan manifest memiliki signature internal Opsigo yang valid. Authenticode publik ditunda; bridge `0.3.12` tetap menerima Authenticode development untuk migrasi satu kali.
+- Baseline OTA ditujukan untuk fresh install; migrasi dari versi Agent lama di luar scope. Agent hanya menerima target versi yang lebih baru, mengunduh lewat HTTPS terautentikasi, dan memasang paket bila SHA-256 cocok dengan command Hub.
 
 ## Kebutuhan fungsional
 
@@ -256,7 +256,7 @@ Jalur utama berjalan dari kiri ke kanan. Kegagalan transien kembali ke `queued`;
 
 **Aturan keandalan**
 
-- **Klaim atomik.** `SELECT id FROM print_jobs WHERE printer_id IN (:printers) AND state = 'queued' ORDER BY received_at LIMIT :n FOR UPDATE SKIP LOCKED`. Query ini dan UPDATE baris terpilih menjadi claimed berjalan dalam satu transaksi (MySQL tidak mengizinkan UPDATE dengan subquery ke tabel yang sama). Agent mengambil maksimal 1 job per printer sekaligus, sehingga urutan cetak di setiap printer terjaga.
+- **Klaim atomik.** Hub mengunci baris printer dengan `FOR UPDATE`, memastikan belum ada job aktif, lalu mengunci job `queued` tertua untuk printer tersebut dalam transaksi yang sama. Printer berbeda tetap dapat diproses paralel, sedangkan request bersamaan untuk printer yang sama diserialkan. Pola ini kompatibel dengan MySQL 5.7 tanpa `SKIP LOCKED`.
 - **Lease.** Job `claimed`/`printing` tanpa event dari agent selama 120 detik kembali ke `queued` (event `lease_expired`). Untuk mencegah cetak ganda saat agent hanya terputus jaringan, agent mengecek spooler lokal sebelum mencetak ulang job yang di-lease ulang olehnya sendiri.
 - **Idempotensi.** Setiap event dari agent membawa `event_id` (UUIDv7) yang dibuat agent. Hub mengabaikan `event_id` yang sudah ada, jadi agent aman mengirim ulang dari outbox.
 - **Retry otomatis.** Error transien (printer offline, spooler sibuk, unduh gagal) di-retry dengan jeda 30 detik, 2 menit, lalu 10 menit. Setelah attempt ke-3, job menjadi `failed`. Error permanen langsung `failed`.
@@ -301,7 +301,7 @@ Agent hanya bicara ke Hub lewat 6 endpoint di bawah `/agent/v1`, semuanya HTTPS 
 
 - **Auth.** Semua endpoint kecuali `enroll` memakai `Authorization: Bearer <agent_id>.<secret>`. Rotasi secret dikirim sebagai perintah `rotate_secret` lewat heartbeat; secret lama masih diterima 10 menit setelah secret baru pertama dipakai.
 - **Lease.** Setiap event yang diterima memperpanjang `lease_until`. Bila job dibatalkan operator atau lease sudah pindah, respons event membawa `abort: true` (atau `409 lease_lost`); agent menghentikan job itu dan tidak mencetak ulang.
-- **Perintah dari Hub.** Tipe di `commands[]`: `test_page`, `upload_logs`, `update` (URL + SHA-256 + tanda tangan paket), `rotate_secret`, `reload_config`. Setiap perintah punya `id` dan hasilnya dilaporkan lewat `commands/{id}/result`.
+- **Perintah dari Hub.** Tipe di `commands[]`: `test_page`, `upload_logs`, `update` (`version`, URL, SHA-256, policy instalasi, release notes opsional), `rotate_secret`, `reload_config`. Setiap perintah punya `id` dan hasilnya dilaporkan lewat `commands/{id}/result`.
 - **Kode error.** Format `{"error": {"code", "message"}}`. `401` = token salah/dicabut: agent berhenti klaim dan mencoba lagi tiap 5 menit. `409` = lease hilang. `422` = payload tidak valid (bug, dicatat di log). `426` = versi agent terlalu lama, harus update. `429` = ikuti `Retry-After`. `5xx`/jaringan = backoff eksponensial dengan jitter, event tetap di outbox.
 - **Versi.** Selama `v1`, perubahan hanya boleh menambah field opsional. Agent mengirim header `X-Agent-Version`; Hub menolak versi di bawah batas minimum dengan `426`. Perubahan yang memecah kompatibilitas menjadi `/agent/v2`, dan v1 tetap hidup sampai semua agent ter-update.
 - **Waktu.** `server_time` di heartbeat dipakai agent untuk menghitung selisih jam; selisih lebih dari 60 detik memicu peringatan clock drift.
@@ -363,7 +363,7 @@ Inti skemanya adalah tiga tabel: `print_jobs` (keadaan sekarang), `print_job_att
 | `audit_logs` | Perubahan konfigurasi oleh manusia | `actor_id`, `action`, `subject`, `before json`, `after json`, `ip` |
 
 ```sql
--- MySQL 9.7, InnoDB, utf8mb4. Semua waktu disimpan UTC di DATETIME(6).
+-- MySQL 5.7, InnoDB, utf8mb4. Semua waktu disimpan UTC di DATETIME(6).
 CREATE TABLE print_jobs (
   id              CHAR(36) PRIMARY KEY,        -- UUIDv7
   tenant_id       CHAR(36) NOT NULL,
@@ -447,13 +447,13 @@ Target dirancang untuk asumsi 50 tenant, 300 agent, dan 1.000 printer. Angka ini
 | Performa | NFR-03 | Dashboard dan daftar job (filter 30 hari) | p95 < 1,5 detik |
 | Reliabilitas | NFR-04 | Ketersediaan Hub | 99,5% per bulan (jam 05.00 sampai 22.00 WIB) |
 | Reliabilitas | NFR-05 | Agent tetap mencetak job yang sudah diklaim saat Hub tidak terjangkau; event disimpan di outbox lokal lalu dikirim saat tersambung | 0 event hilang |
-| Reliabilitas | NFR-06 | Tidak ada cetak ganda karena retry jaringan | Klaim memakai lease + `SKIP LOCKED`, event idempoten per `event_id` |
+| Reliabilitas | NFR-06 | Tidak ada cetak ganda karena retry jaringan | Klaim memakai lease + row lock per printer, event idempoten per `event_id` |
 | Reliabilitas | NFR-07 | Agent pulih sendiri setelah PC reboot atau crash | Windows service start otomatis + recovery action restart |
 | Observability | NFR-08 | Setiap request membawa `trace_id` yang ikut ke event job dan log agent | 100% |
 | Observability | NFR-09 | Metrik: kedalaman antrean per printer, umur job tertua, rasio gagal, agent offline, latensi callback | Tampil di Pulse/Grafana + alert |
 | Keamanan | NFR-10 | Isolasi tenant diuji otomatis di CI | Test lintas tenant di setiap endpoint |
 | Keamanan | NFR-11 | Secret tidak pernah muncul di log, UI, atau audit | Disamarkan di semua tempat |
-| Keamanan | NFR-12 | TLS 1.2+ untuk semua koneksi; paket OTA memiliki signature release internal Opsigo | Wajib |
+| Keamanan | NFR-12 | TLS 1.2+ untuk semua koneksi; download OTA membutuhkan token Agent + signed URL dan Agent memverifikasi SHA-256 | Wajib |
 | Agent | NFR-13 | Jejak di PC lokasi | RAM < 60 MB idle, CPU < 1% idle, satu service, satu folder |
 | Agent | NFR-14 | Kompatibilitas OS | Windows 10/11 dan Windows Server 2016+ (x64) |
 | Maintainability | NFR-15 | Cakupan test pada domain inti (state machine, klaim, dedupe, adapter) | ≥ 80% baris; test kontrak untuk API agent |
@@ -519,14 +519,14 @@ Proyek dimulai dari 2 repo baru dan Fase 0, bukan langsung MVP. Repo `opsifin-au
 
 | Repo | Isi | Setup lokal |
 | --- | --- | --- |
-| `opsifin-print-hub` | Laravel 13 + PHP 8.5, Filament 5, MySQL 9.7 LTS, Redis 8 + Horizon. Modul di `app/Domain/*`, kontrak di `contracts/agent-v1.yaml` | Docker Compose (app, worker Horizon, scheduler, MySQL, Redis); bisa dijalankan di Linux/WSL |
+| `opsifin-print-hub` | Laravel 13 + PHP 8.5, Filament 5, MySQL 5.7, database queue/cache. Modul di `app/Domain/*`, kontrak di `contracts/agent-v1.yaml` | Docker Compose (app, database queue worker, scheduler) pada external network opsifin-main; bisa dijalankan di Linux/WSL |
 | `opsifin-print-agent` | .NET 10 Worker Service: `src/Agent.Service` (host + loop), `src/Agent.Printing` (winspool, PDFium, monitor spooler), `src/Agent.Hub` (klien API dari OpenAPI), `installer/` (WiX), `tests/` | Wajib Windows 10/11 (fisik atau VM) dengan minimal 1 printer nyata untuk uji cetak |
 
 Kedua repo menyimpan `docs/PRD.md` (ekspor dokumen ini) dan `CLAUDE.md` yang merujuk ke PRD, supaya setiap sesi coding memakai konteks yang sama. Dokumen ini tetap menjadi tempat diskusi dan keputusan; ekspor diperbarui setiap Gate.
 
 **Checklist Fase 0** (urut berdasarkan lama tunggu, yang paling lama dimulai duluan)
 
-- [x] Tetapkan signature release internal Opsigo sebagai jalur tanpa biaya; Authenticode publik ditunda sampai skala distribusi membutuhkannya
+- [x] Tetapkan baseline OTA sederhana: satu MSI, HTTPS terautentikasi, dan SHA-256 dari Hub; migrasi Agent lama di luar scope
 - [ ] Jawab pertanyaan terbuka: jumlah tenant/printer, Hub di cloud atau on-premise, akses `Link` PDF
 - [ ] Kumpulkan `Link` PDF semua tenant dan uji dari jaringan calon Hub (S5)
 - [ ] Survei IT klien: hak admin, proxy, antivirus, cara instal massal (S10)
@@ -564,7 +564,7 @@ DoD berlaku di tiga tingkat: setiap item kerja (story/PR), setiap modul fitur, d
 | Callback | Callback idempoten (kirim dua kali, efeknya sama); kegagalan opsifin-main di-retry dengan backoff dan terlihat di detail job; `Failed` terkirim untuk kegagalan permanen |
 | Dashboard & laporan | Angka dashboard cocok dengan query langsung ke DB (rekonsiliasi harian di staging); filter bisa dibagikan via URL |
 | Notifikasi | Setiap jenis alert dipicu di staging dan diterima di kanal yang diatur; ada dedup/throttle (maksimal 1 alert sama per 15 menit) |
-| Update agent | Rollout canary 10% lalu 100% berhasil; rollback ke versi sebelumnya berhasil; paket tanpa signature release Opsigo yang valid ditolak |
+| Update agent | Rollout canary 10% lalu 100% berhasil; policy manual/automatic dihormati; paket dengan SHA-256 berbeda ditolak; selesai hanya setelah heartbeat melaporkan versi target |
 
 ### DoD rilis
 
@@ -602,7 +602,7 @@ Risiko terbesar adalah cetak ganda atau terlewat selama masa transisi, saat agen
 | Spooler "selesai" belum tentu berarti kertas keluar | `printed` palsu saat printer macet setelah menerima data | Status printer dipantau 60 detik setelah spooled; error di jendela itu ditandai `printed_unverified` dan muncul di dashboard. Keterbatasan ini didokumentasikan |
 | Hub crash setelah `getData` menandai `Process`, sebelum job tersimpan | Invoice tersangkut | `getData` tetap mengembalikan baris `Process`, jadi pull berikutnya mengambilnya lagi; dedupe mencegah duplikat |
 | PC lokasi mati atau tidak ada di lokasi | Antrean menumpuk diam-diam | Alert agent offline > 3 menit + job tertua > 10 menit; printer cadangan (FR-21) di v2 |
-| SmartScreen/antivirus memblokir agent | Instalasi pertama perlu konfirmasi atau whitelist | Panduan `More info → Run anyway`, publikasi SHA-256, dan whitelist hash oleh IT customer; Authenticode publik dapat ditambahkan saat skala membenarkan biayanya |
+| SmartScreen/antivirus memblokir agent | MSI tanpa publisher publik dapat diblokir walaupun SHA-256 valid | Panduan onboarding, publikasi SHA-256, whitelist hash oleh IT customer, dan uji endpoint protection saat pilot |
 | Kebocoran data antar tenant | Insiden keamanan serius | Global scope + test arsitektur + static analysis + test lintas tenant, semuanya wajib lulus di CI |
 | Lisensi SumatraPDF (GPLv3) | Risiko hukum bila salah dibundel | Didistribusikan sebagai executable terpisah tanpa modifikasi, dengan teks lisensi. Opsi PDFium (BSD) bila legal keberatan |
 | Tim belum familiar dengan C#/.NET | Kecepatan pengembangan agent | Cakupan agent kecil (\~3 rb baris); template proyek + reviewer .NET berpengalaman |

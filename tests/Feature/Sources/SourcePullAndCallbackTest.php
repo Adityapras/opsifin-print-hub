@@ -468,7 +468,7 @@ it('mengunduh snapshot PDF baru saat refetch retry tanpa menghapus dokumen lama'
         ->and($retryEvent->data['printer_id'])->toBe($replacementPrinter->getKey());
 });
 
-it('mengantrekan refetch ke Horizon dan mencegah request aktif ganda', function () {
+it('mengantrekan refetch ke background worker dan mencegah request aktif ganda', function () {
     Storage::fake('local');
     Queue::fake();
     $fixture = sourceFixture('async-refetch');

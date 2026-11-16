@@ -8,6 +8,10 @@ Pusat autoprint invoice multi-tenant untuk Opsifin. Hub menarik antrean cetak da
 
 ## Mulai
 
+Hub memakai schema `print_hub` pada MySQL 5.7 yang sudah berjalan di Docker network
+`opsifin-main-networks`. Siapkan user database khusus Hub dan pastikan hostname MySQL
+di network tersebut adalah `mysql`; Hub tidak lagi menjalankan container MySQL atau Redis sendiri.
+
 ```bash
 cp .env.example .env
 docker compose up -d --build
@@ -16,7 +20,7 @@ docker compose exec app php artisan migrate
 docker compose exec app php artisan make:filament-user
 ```
 
-Panel admin: http://localhost:8000/admin · Horizon: http://localhost:8000/horizon
+Panel admin: http://localhost:8000/admin
 
 Panduan pengembangan ada di [`CLAUDE.md`](CLAUDE.md).
 

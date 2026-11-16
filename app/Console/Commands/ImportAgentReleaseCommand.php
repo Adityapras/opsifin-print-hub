@@ -11,14 +11,12 @@ final class ImportAgentReleaseCommand extends Command
     protected $signature = 'hub:import-agent-release
         {path : Path relative to the private local storage disk}
         {version : Three-part MSI ProductVersion}
-        {--channel=stable}
-        {--signature-type=authenticode : authenticode or opsigo-rsa-sha256-v1}
-        {--manifest= : Path to the private JSON release manifest}
+        {--install-policy=manual : manual or automatic}
         {--notes=}
         {--actor= : Platform administrator email}
         {--publish : Publish immediately after verification}';
 
-    protected $description = 'Import and verify a signed Agent MSI already present in private storage';
+    protected $description = 'Import an Agent MSI already present in private storage and calculate its SHA-256';
 
     public function handle(AgentReleaseService $releases): int
     {
@@ -36,10 +34,8 @@ final class ImportAgentReleaseCommand extends Command
 
         $release = $releases->create([
             'version' => (string) $this->argument('version'),
-            'channel' => (string) $this->option('channel'),
             'path' => (string) $this->argument('path'),
-            'signature_type' => (string) $this->option('signature-type'),
-            'signature_manifest_path' => $this->option('manifest'),
+            'install_policy' => (string) $this->option('install-policy'),
             'original_name' => basename((string) $this->argument('path')),
             'release_notes' => $this->option('notes'),
         ], $actor);
@@ -50,8 +46,7 @@ final class ImportAgentReleaseCommand extends Command
 
         $this->info("Agent {$release->version} imported with status {$release->status}.");
         $this->line("SHA-256: {$release->sha256}");
-        $this->line("Verification: {$release->signature_type}");
-        $this->line("Signer: {$release->signature_subject}");
+        $this->line("Installation policy: {$release->install_policy}");
 
         return self::SUCCESS;
     }

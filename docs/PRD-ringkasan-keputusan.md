@@ -12,7 +12,7 @@ Rekomendasinya tetap **Hub terpusat + agent ringan**, dengan satu koreksi dari P
 | 2 | Multi-tenant: agent dipasang di mana? | Tenant = satu perusahaan klien (satu opsifin-main). Agent dipasang di **setiap komputer yang punya akses ke printer**, sebanyak yang dibutuhkan. Untuk printer jaringan cukup 1 PC per lokasi; printer USB butuh agent di PC tempat printer itu dicolok |
 | 3 | Cara kerja Hub, agent, opsifin-main | Hub menarik antrean dari opsifin-main, agent menarik job dari Hub lalu mencetak, Hub melapor balik ke opsifin-main. Agent tidak pernah berbicara dengan opsifin-main. Lihat diagram alur di bawah |
 | 4 | Tepat untuk menggantikan app lama? | Ya. Masalah app lama ada di sisi operasional, bukan fungsi, jadi perilaku ke opsifin-main dipertahankan 1:1 sementara konfigurasi, logika, dan update dipindah ke server |
-| 5 | Tidak over-engineering tapi skalabel? | Satu VM dengan Docker Compose (Laravel + MySQL + Redis) cukup untuk sekitar 1.000 printer. Setiap komponen punya jalur upgrade yang baru dipakai saat angkanya tercapai |
+| 5 | Tidak over-engineering tapi skalabel? | Satu VM dengan Docker Compose (Laravel + database queue worker + scheduler) dan schema khusus pada MySQL Opsifin cukup untuk beban awal. Redis baru ditambahkan bila metrik queue membuktikan MySQL menjadi bottleneck |
 | 6 | Stopper | Ada 13 titik. Yang paling kritis: printer tidak terlihat dari Windows service, presisi cetak kertas kop (v2), cetak ganda saat cutover, dan Hub sebagai satu titik gagal |
 | 7 | Riset & benchmark | Riset dokumentasi Microsoft, PDFium, dan SumatraPDF sudah dilakukan. Tujuh benchmark dengan kriteria lulus dijalankan di Fase 0, sebelum kode produksi ditulis |
 | 8 | Lebih baik & mudah dikembangkan | Sebagian besar fitur baru cukup di-deploy di Hub (sekali untuk semua tenant). Pengaturan agent dikirim lewat remote config, dan perubahan kode agent dikirim lewat auto-update bertahap. Tidak ada lagi build ulang lalu salin `.exe` ke setiap PC |
@@ -172,7 +172,7 @@ Puncak sekitar 70 req/detik ke endpoint ringan masih jauh di bawah kapasitas sat
 
 | Komponen | MVP (hari pertama) | Ambang naik kelas | Naik ke |
 | --- | --- | --- | --- |
-| Hosting Hub | 1 VM, Docker Compose: app, worker, scheduler, MySQL, Redis | CPU > 60% selama 1 jam di jam sibuk | 2+ container app di belakang load balancer |
+| Hosting Hub | 1 VM, Docker Compose: app, database queue worker, scheduler; MySQL 5.7 memakai network opsifin-main | CPU > 60% selama 1 jam di jam sibuk atau antrean refetch terus bertambah | Redis queue atau 2+ container app di belakang load balancer |
 | Database | MySQL di VM yang sama + backup harian + binlog | > 2.000 printer atau RPO < 15 menit wajib | MySQL managed (HA + PITR) |
 | Penyimpanan PDF | Volume disk lokal | Hub lebih dari 1 instance | Object storage S3-compatible |
 | Pengiriman job | Poll klaim adaptif | Latensi p95 > 60 detik atau > 100 req/detik dari poll | Reverb WebSocket sebagai sinyal "ada job" |
@@ -196,7 +196,7 @@ Empat stopper kritis harus terbukti aman di **Fase 0 (spike 2 minggu)** sebelum 
 | S6 | Beban `getData` dan render PDF di opsifin-main | Tinggi | Query berat dengan `memory_limit 1024M`; PDF dirender saat diminta | Benchmark B6 di tenant terbesar | Interval 30 detik, maksimal 2 paralel per tenant, jitter; API v3 di Fase 4 |
 | S7 | Versi `opsifin_api_print` berbeda antar tenant | Tinggi | Tiap klien punya instance sendiri; ada yang belum di-update | Saat onboarding tenant | Test kontrak per tenant; adapter mendeteksi versi; daftar versi minimum |
 | S8 | Driver printer memunculkan dialog di session 0 | Tinggi | Proses cetak menggantung tanpa terlihat | Benchmark B1/B2 | Timeout per job + kill proses; mesin cadangan; daftar driver bermasalah |
-| S9 | SmartScreen dan antivirus klien | Sedang | Installer tanpa publisher publik memerlukan konfirmasi atau whitelist saat instalasi pertama | Sediakan panduan onboarding dan SHA-256 sejak pilot | Signature internal Opsigo untuk OTA; `More info → Run anyway` atau whitelist hash oleh IT klien; Authenticode publik opsional saat skala membenarkan biaya |
+| S9 | SmartScreen dan antivirus klien | Sedang | Installer tanpa publisher publik memerlukan konfirmasi atau whitelist saat instalasi pertama | Sediakan panduan onboarding dan SHA-256 sejak pilot | `More info → Run anyway`, whitelist hash oleh IT klien, dan uji endpoint protection sebelum rollout |
 | S10 | Hak admin dan proxy di PC klien | Sedang | Instalasi service butuh admin; banyak kantor memakai proxy | Survei IT klien di Fase 0 | MSI diam lewat RMM/GPO; `HttpClient` memakai proxy sistem + konfigurasi proxy manual |
 | S11 | Spooler "selesai" belum tentu kertas keluar | Sedang | Status `printed` bisa palsu bila printer macet setelah menerima data | Benchmark B3 | Jendela verifikasi 60 detik, event `printed_unverified`, didokumentasikan sebagai batasan |
 | S12 | Data invoice klien tersimpan terpusat | Sedang | Isu kontrak dan privasi dengan klien | Review legal sebelum pilot | Retensi 90 hari per tenant; opsi simpan hash saja; enkripsi storage |
@@ -253,7 +253,7 @@ Kuncinya adalah **agent dibuat "bodoh" dan stabil, Hub dibuat pintar.** Semakin 
 - **Remote config versi.** Setiap balasan heartbeat membawa `config_version`; agent menerapkan config baru tanpa restart dan melaporkan bila gagal.
 - **Capability flags.** Agent melaporkan kemampuannya (`engines: [pdfium, sumatra]`, `agent_version`). Hub hanya mengirim fitur yang didukung agent itu, sehingga agent lama dan baru bisa hidup bersamaan.
 - **Kontrak terversi.** `/agent/v1` diberi spesifikasi OpenAPI; Hub mendukung versi N dan N-1 agent.
-- **Auto-update bertahap.** CI membangun dan menandatangani paket. Hub merilisnya ke 10% agent (canary), lalu 100% bila error rate tidak naik dalam 24 jam. Rollback cukup satu klik.
+- **Auto-update bertahap.** CI membangun MSI, Hub menghitung SHA-256, lalu merilisnya ke 10% agent (canary) dan 100% bila error rate tidak naik dalam 24 jam. Rollback cukup satu klik.
 - **Adapter sumber sebagai interface.** `SourceAdapter` punya method `fetch()`, `document()`, `report()`. Adapter v2 (getData lama) dan v3 hidup berdampingan, dan tenant dipindah satu per satu.
 - **Modul Hub dipisah per domain** (`app/Domain/*`) dengan test di setiap modul, sehingga engineer baru bisa mengubah satu modul tanpa memahami seluruh sistem.
 

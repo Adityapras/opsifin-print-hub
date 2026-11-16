@@ -10,11 +10,13 @@ use Illuminate\Database\Eloquent\Model;
 
 trait HasTenantSubNavigation
 {
+    use HasTenantWorkspaceGuide;
+
     abstract public function getParentRecord(): ?Model;
 
     public static function getSubNavigationPosition(): SubNavigationPosition
     {
-        return SubNavigationPosition::Top;
+        return SubNavigationPosition::End;
     }
 
     /** @return array<NavigationItem> */

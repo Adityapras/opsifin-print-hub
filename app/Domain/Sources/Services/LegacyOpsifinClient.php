@@ -88,6 +88,20 @@ final class LegacyOpsifinClient
             ->get($this->url($connection->base_url, 'identity'));
     }
 
+    public function resetPrinterConfiguration(
+        SourceConnection $connection,
+        string $integrationId,
+        string $reason,
+    ): Response {
+        $this->assertVerified($connection);
+
+        return $this->authenticated($connection)
+            ->post($this->url($connection->base_url, 'resetPrinterConfiguration'), [
+                'IntegrationId' => $integrationId,
+                'Reason' => $reason,
+            ]);
+    }
+
     private function authenticated(SourceConnection $connection): PendingRequest
     {
         return Http::withBasicAuth($connection->username, $connection->password_enc)

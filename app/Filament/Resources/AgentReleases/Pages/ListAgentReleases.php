@@ -12,6 +12,6 @@ final class ListAgentReleases extends ListRecords
 
     protected function getHeaderActions(): array
     {
-        return [CreateAction::make()->label('Upload signed MSI')];
+        return [CreateAction::make()->label('Upload Agent MSI')];
     }
 }

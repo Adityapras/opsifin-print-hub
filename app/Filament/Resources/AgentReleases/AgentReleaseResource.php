@@ -33,6 +33,7 @@ use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Str;
 
 final class AgentReleaseResource extends Resource
 {
@@ -55,9 +56,9 @@ final class AgentReleaseResource extends Resource
     public static function form(Schema $schema): Schema
     {
         return $schema->components([
-            Section::make('Verified Windows package')
-                ->description('Upload the MSI and choose either the free Opsigo release manifest or legacy Authenticode bridge verification.')
-                ->icon(Heroicon::OutlinedShieldCheck)
+            Section::make('Agent update package')
+                ->description('Upload one MSI. The Hub verifies ProductVersion and calculates SHA-256 automatically.')
+                ->icon(Heroicon::OutlinedCloudArrowUp)
                 ->schema([
                     TextInput::make('version')
                         ->label('Version')
@@ -66,19 +67,14 @@ final class AgentReleaseResource extends Resource
                         ->regex('/^\d+\.\d+\.\d+$/')
                         ->required()
                         ->unique(ignoreRecord: true),
-                    Select::make('channel')
-                        ->options(['stable' => 'Stable', 'preview' => 'Preview'])
-                        ->default('stable')
-                        ->native(false)
-                        ->required(),
-                    Select::make('signature_type')
-                        ->label('Release verification')
+                    Select::make('install_policy')
+                        ->label('Installation policy')
                         ->options([
-                            AgentRelease::SIGNATURE_OPSIGO_INTERNAL => 'Opsigo internal signature (free)',
-                            AgentRelease::SIGNATURE_AUTHENTICODE => 'Legacy Authenticode bridge',
+                            AgentRelease::INSTALL_MANUAL => 'Manual — user selects Install update',
+                            AgentRelease::INSTALL_AUTOMATIC => 'Automatic — install when Agent is idle',
                         ])
-                        ->default(AgentRelease::SIGNATURE_OPSIGO_INTERNAL)
-                        ->helperText('Use Authenticode only for the bridge release that upgrades pre-bridge Agents.')
+                        ->default(AgentRelease::INSTALL_MANUAL)
+                        ->helperText('Both policies wait for active printing and event delivery to finish.')
                         ->native(false)
                         ->required(),
                     FileUpload::make('path')
@@ -86,19 +82,16 @@ final class AgentReleaseResource extends Resource
                         ->disk('local')
                         ->directory('agent-releases/packages')
                         ->visibility('private')
-                        ->acceptedFileTypes(['application/x-msi', 'application/octet-stream'])
-                        ->maxSize(524288)
+                        ->getUploadedFileNameForStorageUsing(fn (): string => Str::uuid().'.msi')
+                        ->acceptedFileTypes([
+                            'application/x-msi',
+                            'application/x-ole-storage',
+                            'application/octet-stream',
+                        ])
+                        ->maxSize((int) ceil(((int) config('print_hub.agent_updates.max_package_bytes')) / 1024))
+                        ->helperText('Maximum package size: 512 MB. Keep this page open until the upload finishes.')
                         ->storeFileNamesIn('original_name')
                         ->required()
-                        ->columnSpanFull(),
-                    FileUpload::make('signature_manifest_path')
-                        ->label('Opsigo release manifest')
-                        ->helperText('Required for the free internal signature. Upload the .release.json file produced beside the MSI.')
-                        ->disk('local')
-                        ->directory('agent-releases/manifests')
-                        ->visibility('private')
-                        ->acceptedFileTypes(['application/json', 'text/json', 'text/plain'])
-                        ->maxSize(64)
                         ->columnSpanFull(),
                     Textarea::make('release_notes')
                         ->label('Release notes')
@@ -118,14 +111,14 @@ final class AgentReleaseResource extends Resource
                 ->schema([
                     TextEntry::make('version')->badge()->color('info'),
                     TextEntry::make('status')->badge()->color(fn (string $state): string => self::statusColor($state)),
-                    TextEntry::make('channel')->badge()->color('gray'),
+                    TextEntry::make('install_policy')
+                        ->label('Installation')
+                        ->formatStateUsing(fn (string $state): string => self::installPolicyLabel($state))
+                        ->badge()
+                        ->color(fn (string $state): string => $state === AgentRelease::INSTALL_AUTOMATIC ? 'warning' : 'info'),
                     TextEntry::make('original_name')->label('Package'),
                     TextEntry::make('size_bytes')->label('Size')->formatStateUsing(fn (int $state): string => number_format($state / 1048576, 2).' MB'),
                     TextEntry::make('sha256')->label('SHA-256')->fontFamily('mono')->copyable()->columnSpanFull(),
-                    TextEntry::make('signature_type')->label('Verification')->badge()->color('success'),
-                    TextEntry::make('signing_key_id')->label('Signing key')->placeholder('Legacy Authenticode'),
-                    TextEntry::make('signature_subject')->label('Verified signer')->columnSpanFull(),
-                    TextEntry::make('signature_verified_at')->label('Signature verified')->dateTime('d M Y, H:i:s'),
                     TextEntry::make('release_notes')->label('Release notes')->placeholder('No release notes')->columnSpanFull(),
                 ])
                 ->columns(3),
@@ -133,10 +126,30 @@ final class AgentReleaseResource extends Resource
                 ->description('Installed is confirmed only after the Agent heartbeat reports the target version.')
                 ->schema([
                     TextEntry::make('pending_total')->label('Pending')->state(fn (AgentRelease $record): int => self::deploymentQuery($record)->whereIn('status', ['pending', 'delivered', 'accepted', 'downloading', 'ready', 'waiting_for_idle', 'installing'])->count())->badge()->color('warning'),
-                    TextEntry::make('installed_total')->label('Installed')->state(fn (AgentRelease $record): int => self::deploymentQuery($record)->where('status', 'installed')->count())->badge()->color('success'),
+                    TextEntry::make('installed_total')->label('Succeeded')->state(fn (AgentRelease $record): int => self::deploymentQuery($record)->where('status', 'installed')->count())->badge()->color('success'),
                     TextEntry::make('failed_total')->label('Failed / stalled')->state(fn (AgentRelease $record): int => self::deploymentQuery($record)->whereIn('status', ['failed', 'stalled'])->count())->badge()->color('danger'),
                 ])
                 ->columns(3),
+            Section::make('Agent deployment lifecycle')
+                ->description('Succeeded is shown only after a heartbeat confirms the target Agent version.')
+                ->schema([
+                    RepeatableEntry::make('deployment_statuses')
+                        ->label('')
+                        ->state(fn (AgentRelease $record): array => self::deploymentEntries($record))
+                        ->schema([
+                            TextEntry::make('tenant')->weight('semibold'),
+                            TextEntry::make('agent')->label('Agent'),
+                            TextEntry::make('install_policy')->label('Policy')->badge()->color('gray'),
+                            TextEntry::make('status')
+                                ->badge()
+                                ->color(fn (string $state): string => self::deploymentStatusColor($state))
+                                ->formatStateUsing(fn (string $state): string => self::deploymentStatusLabel($state)),
+                            TextEntry::make('progress')->label('Progress'),
+                            TextEntry::make('observed_at')->label('Last update'),
+                            TextEntry::make('message')->placeholder('No status message')->columnSpanFull(),
+                        ])
+                        ->columns(5),
+                ]),
             Section::make('Audit trail')
                 ->schema([
                     RepeatableEntry::make('events')
@@ -157,7 +170,11 @@ final class AgentReleaseResource extends Resource
         return $table
             ->columns([
                 TextColumn::make('version')->label('Version')->badge()->color('info')->searchable()->sortable(),
-                TextColumn::make('channel')->badge()->color('gray'),
+                TextColumn::make('install_policy')
+                    ->label('Installation')
+                    ->formatStateUsing(fn (string $state): string => self::installPolicyLabel($state))
+                    ->badge()
+                    ->color(fn (string $state): string => $state === AgentRelease::INSTALL_AUTOMATIC ? 'warning' : 'info'),
                 TextColumn::make('status')->badge()->color(fn (string $state): string => self::statusColor($state)),
                 TextColumn::make('deployments_total')
                     ->label('Scheduled')
@@ -180,7 +197,7 @@ final class AgentReleaseResource extends Resource
                         ->color('success')
                         ->visible(fn (AgentRelease $record): bool => $record->status === AgentRelease::STATUS_DRAFT)
                         ->requiresConfirmation()
-                        ->modalDescription('Publishing makes this signed package available for rollout. The package itself remains immutable.')
+                        ->modalDescription('Publishing makes this MSI available for rollout. Its SHA-256 and installation policy remain immutable.')
                         ->action(function (AgentRelease $record, AgentReleaseService $service): void {
                             $service->publish($record, self::actor());
                             Notification::make()->title("Agent {$record->version} published")->success()->send();
@@ -233,7 +250,7 @@ final class AgentReleaseResource extends Resource
                     ->dropdownAutoPlacement(),
             ])
             ->emptyStateHeading('No Agent releases')
-            ->emptyStateDescription('Upload a signed MSI to begin a controlled rollout.')
+            ->emptyStateDescription('Upload one MSI to begin a controlled rollout.')
             ->emptyStateIcon(Heroicon::OutlinedCloudArrowUp);
     }
 
@@ -291,6 +308,55 @@ final class AgentReleaseResource extends Resource
         return match ($status) {
             AgentRelease::STATUS_PUBLISHED => 'success',
             AgentRelease::STATUS_RETIRED => 'danger',
+            default => 'warning',
+        };
+    }
+
+    private static function installPolicyLabel(string $policy): string
+    {
+        return $policy === AgentRelease::INSTALL_AUTOMATIC ? 'Automatic' : 'Manual';
+    }
+
+    /** @return array<int, array<string, string>> */
+    private static function deploymentEntries(AgentRelease $release): array
+    {
+        return AgentUpdateDeployment::query()
+            ->withoutGlobalScopes()
+            ->leftJoin('tenants', 'tenants.id', '=', 'agent_update_deployments.tenant_id')
+            ->leftJoin('agents', 'agents.id', '=', 'agent_update_deployments.agent_id')
+            ->select([
+                'agent_update_deployments.*',
+                'tenants.name as tenant_name',
+                'agents.hostname as agent_hostname',
+            ])
+            ->where('agent_release_id', $release->getKey())
+            ->latest('scheduled_at')
+            ->get()
+            ->map(fn (AgentUpdateDeployment $deployment): array => [
+                'tenant' => (string) ($deployment->getAttribute('tenant_name') ?? 'Unknown tenant'),
+                'agent' => (string) ($deployment->getAttribute('agent_hostname') ?? 'Unknown Agent'),
+                'install_policy' => self::installPolicyLabel($deployment->install_policy),
+                'status' => $deployment->status,
+                'progress' => "{$deployment->progress_percent}%",
+                'observed_at' => DateTimeDisplay::relativeWithClock($deployment->last_observed_at, config('app.timezone')),
+                'message' => $deployment->message ?? '',
+            ])
+            ->all();
+    }
+
+    private static function deploymentStatusLabel(string $status): string
+    {
+        return $status === 'installed'
+            ? 'Succeeded'
+            : str($status)->replace('_', ' ')->title()->toString();
+    }
+
+    private static function deploymentStatusColor(string $status): string
+    {
+        return match ($status) {
+            'installed' => 'success',
+            'failed', 'stalled' => 'danger',
+            'ready', 'downloading', 'installing' => 'info',
             default => 'warning',
         };
     }

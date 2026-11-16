@@ -1,6 +1,6 @@
 # Opsifin Print Hub — Progress Memory
 
-Last updated: 2026-11-12 (Asia/Jakarta)
+Last updated: 2026-11-13 (Asia/Jakarta)
 
 Dokumen ini menjadi handoff ringkas untuk Codex/agent berikutnya. Baca `AGENTS.md`,
 `docs/PRD.md`, dan `docs/PRD-ringkasan-keputusan.md` sebelum mengubah perilaku domain.
@@ -13,18 +13,21 @@ Dokumen ini menjadi handoff ringkas untuk Codex/agent berikutnya. Baca `AGENTS.m
 
 ## Status aplikasi
 
-- Docker Compose aktif: app, Horizon, scheduler, MySQL, dan Redis.
+- Docker Compose memakai app, database queue worker, dan scheduler. Database memakai
+  schema `print_hub` pada MySQL 5.7 di external network `opsifin-main-networks`.
 - Admin Panel internal tersedia di `/admin`; halaman awal adalah Global Dashboard,
   sedangkan master client berada di `/admin/tenants`.
 - Resource operasional selalu berada di bawah tenant master, misalnya
   `/admin/tenants/{tenant:code}/sites`, `/agents`, dan `/source-connections`.
 - Health endpoint terakhir terverifikasi HTTP 200.
 - Migrasi MySQL source sudah tersedia sampai
-  `2026_11_12_000000_add_internal_signature_to_agent_releases`.
-- Validasi terakhir: 92 test lulus (549 assertions), PHPStan bersih, Pint bersih.
-- Horizon aktif di `/horizon` dengan worker Redis sehat dan akses production dibatasi ke
-  Platform Admin. Horizon kini memproses background PDF refetch; source pull dan callback
-  MVP masih dijalankan langsung oleh scheduler tiap 10 detik.
+  `2026_11_13_000000_add_printer_status_sync_support` dan sudah diterapkan pada database
+  pengembangan lokal.
+- Validasi terakhir: 98 test lulus (584 assertions), PHPStan bersih, Pint bersih,
+  Composer audit tanpa security advisory.
+- Background PDF refetch diproses database queue worker. Source pull dan callback MVP
+  tetap dijalankan langsung oleh scheduler tiap 10 detik; cache lock database mencegah
+  task yang sama overlap.
 
 ## Fitur yang sudah selesai
 
@@ -49,30 +52,25 @@ Dokumen ini menjadi handoff ringkas untuk Codex/agent berikutnya. Baca `AGENTS.m
 
 ### Agent release dan OTA
 
-- Platform Admin memiliki resource global **Agent Releases** untuk upload MSI + manifest internal,
-  verifikasi signature RSA dan ProductVersion, publish, pilot 10%, rollout tenant, retire, serta
-  melihat checksum, signing key, audit event, dan ringkasan deployment. Authenticode legacy tetap
-  tersedia khusus bridge `0.3.12`.
-- Paket disimpan private dan hanya diunduh melalui signed URL. URL dibuat ulang saat command
-  benar-benar dikirim agar Agent yang lama offline tidak menerima URL kedaluwarsa.
-- Aksi **Schedule update** tersedia pada daftar Agent. Policy `automatic` tetap menunggu Agent
-  idle, menghentikan claim baru, menyelesaikan print aktif, dan flush outbox sebelum instalasi.
+- Platform Admin memiliki resource global **Agent Releases** untuk upload satu MSI, validasi
+  ProductVersion, perhitungan SHA-256 server-side, pemilihan policy manual/automatic, publish,
+  pilot 10%, rollout tenant, retire, audit event, dan monitoring deployment per Agent.
+- Tidak ada Authenticode, manifest release, private signing key, key ID, channel, atau migration
+  bridge Agent lama. Baseline OTA ini khusus fresh install sesuai handoff Agent 12 November 2026.
+- Paket disimpan private dan hanya diunduh dengan signed URL yang belum kedaluwarsa serta Bearer
+  token Agent pemilik deployment. URL dibuat ulang saat command benar-benar dikirim.
+- Aksi **Schedule update** tersedia pada daftar Agent dan selalu memakai policy milik release.
+  Default policy adalah `manual`; policy `automatic` tetap menunggu Agent idle, menghentikan claim
+  baru, menyelesaikan print aktif, dan flush outbox sebelum instalasi.
 - Lifecycle heartbeat opsional mencatat `downloading`, `ready`, `waiting_for_idle`, `installing`,
-  dan `failed`. Command `succeeded` hanya berarti diterima; status `installed` baru ditulis ketika
-  heartbeat berikutnya melaporkan versi target.
+  dan `failed`. Command `succeeded` hanya berarti diterima; status internal `installed` baru ditulis
+  ketika heartbeat berikutnya melaporkan versi target dan ditampilkan sebagai **Succeeded** di UI.
 - Scheduler menandai deployment tanpa progres sebagai `stalled` setelah batas konfigurasi.
-- Release bridge `0.3.12` menggunakan Authenticode development. Release internal aktif `0.3.13`
-  memiliki SHA-256 `d15565fc31eaef432e1b3ca05031d0ec652a96dc713ed20ebc9c25ebe6d714fb`
-  dan key ID `opsigo-release-2026-01`.
-- Rollout lokal `0.3.9 → 0.3.11` berhasil end-to-end pada 10 November 2026: command diterima,
-  MSI terverifikasi, instalasi automatic ketika idle, service restart, dan heartbeat versi baru
-  mengubah deployment menjadi `installed`.
-- Hub menolak internal release untuk Agent di bawah `0.3.12`, sehingga rollout selalu memasang
-  Authenticode bridge lebih dulu. Release `0.3.13+` membawa signature, key ID, size, channel, dan
-  SHA-256 dalam command; private key tidak pernah berada di Hub.
-- Rollout lokal `0.3.11 → 0.3.12` (bridge Authenticode) dan `0.3.12 → 0.3.13` (MSI tanpa
-  Authenticode, manifest internal) berhasil pada 12 November 2026. Keduanya mencapai `installed`
-  setelah heartbeat mengonfirmasi target version; service Windows tetap `Running`.
+- Command update hanya membawa `version`, `url`, `sha256`, `install_policy`, dan `release_notes`
+  opsional. Command pending dari baseline signing lama dinormalisasi sebelum dikirim agar field
+  obsolete tidak pernah mencapai Agent baru.
+- Download atau SHA-256 yang gagal tidak mengubah versi terpasang. Manual maupun automatic harus
+  menghentikan claim baru dan menunggu print aktif serta event delivery selesai sebelum instalasi.
 
 ### Source, job, dan callback
 
@@ -117,6 +115,12 @@ Dokumen ini menjadi handoff ringkas untuk Codex/agent berikutnya. Baca `AGENTS.m
   menutup attempt lama dengan outcome `lease_expired`, lalu mengembalikan job ke `queued`
   agar satu printer tidak terkunci permanen.
 - Callback outbox dengan retry/backoff ke opsifin-main.
+- Scheduler `hub:sync-printer-statuses` mengirim availability efektif setiap Printer Binding
+  ke endpoint Opsifin Main `/PrinterStatus`. Agent stale, offline, revoked, atau unknown selalu
+  diproyeksikan sebagai `OFFLINE`, meskipun heartbeat printer terakhir masih `ONLINE`.
+- Hasil sinkronisasi status disimpan per binding (`last_synced_printer_status`, waktu sukses,
+  jumlah percobaan, jadwal retry, dan error terakhir) dengan retry backoff. Tabel Bindings
+  menampilkan status yang terakhir dikirim agar perbedaan Hub dan Opsifin dapat diaudit.
 - Job `failed` memiliki dua aksi manual dengan alasan wajib: `Retry printing` memakai
   snapshot PDF tersimpan, sedangkan `Refetch and retry` mengunduh dan memvalidasi PDF
   baru dari Opsifin. Keduanya mempertahankan job, dokumen lama, attempt, dan timeline.
@@ -129,7 +133,7 @@ Dokumen ini menjadi handoff ringkas untuk Codex/agent berikutnya. Baca `AGENTS.m
   Event dan audit menyimpan binding/printer lama serta baru, sehingga job historis dari
   binding inactive dapat diarahkan ke printer pengganti tanpa mengaktifkan route lama.
 - `Refetch and retry` tidak lagi menahan request Livewire selama Opsifin menghasilkan PDF.
-  Submit membuat `print_job_retry_requests` persistent lalu Horizon mengunduh, memvalidasi,
+  Submit membuat `print_job_retry_requests` persistent lalu background worker mengunduh, memvalidasi,
   menyimpan snapshot, dan mengantrekan job. Request aktif mencegah klik ganda; kegagalan
   background tersimpan dan job tetap `failed`, sedangkan sukses mengubahnya ke `queued`
   dalam transaksi yang sama dengan status request `succeeded`.
@@ -160,8 +164,23 @@ Dokumen ini menjadi handoff ringkas untuk Codex/agent berikutnya. Baca `AGENTS.m
   Outbox, dan Audit Logs menggunakan route bertingkat di bawah tenant master.
 - Tenant Overview menjadi pintu masuk menuju seluruh resource tenant dan menampilkan
   jumlah estate yang dikelola serta topology Site → Agent PC → Windows Printer.
-- Navigasi resource tenant pada halaman Overview menggunakan top tabs yang dapat digeser,
-  menggantikan deretan action button; Edit dan Archive tetap menjadi header action.
+- Navigasi workspace tenant berada di sisi kanan dan hanya menampilkan nama menu. Penjelasan,
+  hal yang harus dikonfigurasi, dan hal yang harus dimonitor ditampilkan sebagai card pada
+  halaman aktif agar navigasi tetap ringkas dan konteks kerja tetap jelas.
+- Menu **Setup guide** menampilkan diagram onboarding dinamis delapan langkah: Integration
+  Identity, Source Connection, Site, Agent, Printer, Binding, status sync, dan controlled E2E
+  print. Setiap langkah memiliki indikator Ready/Action required, target hasil, dan tautan
+  langsung ke halaman konfigurasi terkait.
+- Platform Admin memiliki aksi **Reinitialize tenant** pada Tenant Overview. Aksi ini
+  mempertahankan tenant, `integration_id`, user/membership, dan audit log, tetapi menghapus
+  seluruh Source Connection, site, Agent, printer, binding, dokumen/job/callback, command,
+  serta deployment update tenant sehingga onboarding dapat dimulai ulang dari nol.
+- Reinitialize bersifat fail-closed: tenant harus bebas dari print/callback/refetch/update aktif,
+  kode tenant dan alasan wajib dikonfirmasi, remote Opsifin Main dibersihkan lebih dahulu,
+  dan kegagalan remote membuat tenant tetap Suspended tanpa menghapus data lokal.
+- Service reinitialize memasang dan memulihkan `TenantContext` secara eksplisit agar action
+  Livewire tetap dapat membaca relasi tenant dan membuat audit log tanpa bergantung pada
+  lifecycle middleware halaman. Context aktif yang menunjuk tenant lain ditolak fail-closed.
 - Menu global `Documentation` menjadi handbook internal di aplikasi. Isinya menjelaskan
   ownership setiap modul, model operasional sederhana Trust → Fleet → Route → Operate,
   flow end-to-end dan responsibility lanes, safety model tenant/routing, alasan tech stack,
@@ -181,11 +200,11 @@ Dokumen ini menjadi handoff ringkas untuk Codex/agent berikutnya. Baca `AGENTS.m
   tenant_admin/operator/viewer per tenant. Client tidak boleh dibuat sebagai user Hub.
 - Platform Settings saat ini merupakan halaman read-only untuk fakta control plane dan
   safety boundary; secret environment tidak ditampilkan.
-- Akun internal lokal `admin@opsifin.com` sudah ditetapkan sebagai Platform Admin agar
-  menu tenant management, Internal Team & Access, dan Platform Settings dapat digunakan.
-- Data onboarding lokal dikosongkan atas permintaan user pada 2026-11-04: tenant `ACME`
-  dan `tenantlocalhost` beserta membership, site, Agent, printer, Source Connection,
-  binding, audit, dan dokumen tenant dihapus permanen. Akun Platform Admin dipertahankan.
+- Schema MySQL 5.7 yang baru dimulai tanpa user maupun data bisnis. Platform Admin pertama
+  perlu dibuat dengan `make:filament-user`, lalu flag `is_platform_admin` diaktifkan sebelum
+  tenant onboarding dimulai.
+- Volume MySQL lokal lama tetap dipertahankan sebagai recovery source dan tidak ikut
+  dipasang pada runtime baru. Tidak ada data bisnis lama yang disalin ke schema baru.
 - Model Tenant memakai `code` sebagai route key. Tombol Open tenant sekarang menghasilkan
   URL `/admin/tenants/ACME`, bukan UUID yang sebelumnya menyebabkan halaman 404.
 - Tombol Tenant Overview menyebut halaman child `index` secara eksplisit. Connections,

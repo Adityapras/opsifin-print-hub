@@ -34,6 +34,19 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        $maxAgentPackageKilobytes = (int) ceil(
+            ((int) config('print_hub.agent_updates.max_package_bytes')) / 1024,
+        );
+
+        // Livewire memvalidasi upload sementara sebelum validasi field Filament.
+        // Gunakan sumber batas yang sama agar MSI valid tidak ditolak lebih awal.
+        config()->set('livewire.temporary_file_upload.rules', [
+            'required',
+            'file',
+            "max:{$maxAgentPackageKilobytes}",
+        ]);
+        config()->set('livewire.temporary_file_upload.max_upload_time', 15);
+
         SourceConnection::observe(ConfigurationAuditObserver::class);
         SourceConnection::observe(SourceConnectionConfigObserver::class);
         PrinterBinding::observe(ConfigurationAuditObserver::class);

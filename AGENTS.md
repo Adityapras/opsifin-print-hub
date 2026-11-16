@@ -13,13 +13,13 @@ Status implementasi dan handoff terakhir ada di `docs/PROGRESS.md`; baca sebelum
 
 ## Stack
 
-Laravel 13 · PHP 8.5 · Filament 5 (panel `/admin`) · MySQL 9.7 LTS · Redis 8 + Horizon · Pest 4 · Larastan.
+Laravel 13 · PHP 8.5 · Filament 5 (panel `/admin`) · MySQL 5.7 · database queue/cache/locks · Pest 4 · Larastan.
 Tidak ada SPA terpisah: semua UI admin lewat Filament.
 
 ## Menjalankan (Docker, tidak butuh PHP lokal)
 
 ```bash
-docker compose up -d --build            # app :8000, horizon, scheduler, mysql :33060, redis :63790
+docker compose up -d --build            # app :8000, database queue worker, scheduler
 docker compose exec app php artisan migrate
 docker compose exec app php artisan make:filament-user
 ```
@@ -57,6 +57,6 @@ Saat menambah modul baru dengan Repositories, tambahkan namespace-nya ke daftar 
 
 - Waktu disimpan UTC (`DATETIME(6)`); konversi ke timezone tenant hanya di tampilan.
 - Primary key UUIDv7 (`HasUuids`).
-- Klaim job: `SELECT ... FOR UPDATE SKIP LOCKED` lalu `UPDATE` dalam satu transaksi (MySQL menolak UPDATE dengan subquery ke tabel yang sama).
-- Test saat ini memakai SQLite in-memory (`phpunit.xml`). Test yang menyentuh partisi, `SKIP LOCKED`, atau JSON khas MySQL harus dijalankan ke MySQL.
+- Klaim job: kunci baris printer lalu `SELECT ... FOR UPDATE` dalam satu transaksi. Lock per printer menjaga paralelisme antar-printer tanpa membutuhkan `SKIP LOCKED` yang belum tersedia di MySQL 5.7.
+- Test saat ini memakai SQLite in-memory (`phpunit.xml`). Migration, locking, dan JSON khas MySQL harus diverifikasi juga pada MySQL 5.7.
 - Komentar kode dalam Bahasa Indonesia, menjelaskan *kenapa*, bukan *apa*.

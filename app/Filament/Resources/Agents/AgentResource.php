@@ -172,28 +172,21 @@ final class AgentResource extends Resource
                                     ->orderByDesc('published_at')
                                     ->get()
                                     ->filter(fn (AgentRelease $release): bool => version_compare($record->version, $release->version, '<'))
-                                    ->mapWithKeys(fn (AgentRelease $release): array => [$release->getKey() => "{$release->version} · {$release->channel}"])
+                                    ->mapWithKeys(fn (AgentRelease $release): array => [
+                                        $release->getKey() => "{$release->version} · ".str($release->install_policy)->title(),
+                                    ])
                                     ->all())
                                 ->helperText(fn (Agent $record): string => "Installed version: {$record->version}")
                                 ->searchable()
                                 ->required(),
-                            Select::make('install_policy')
-                                ->label('Install policy')
-                                ->options([
-                                    'automatic' => 'Install automatically when Agent is idle',
-                                    'manual' => 'Download only; user installs from Agent UI',
-                                ])
-                                ->default('automatic')
-                                ->native(false)
-                                ->required(),
                         ])
                         ->modalHeading(fn (Agent $record): string => "Update {$record->hostname}")
-                        ->modalDescription('The Agent verifies SHA-256 and Authenticode before installation. Active print work is never interrupted by the when-idle policy.')
+                        ->modalDescription('The release installation policy is applied automatically. SHA-256 is verified and active print work is never interrupted.')
                         ->action(function (Agent $record, array $data, AgentUpdateRolloutService $rollout): void {
                             $release = AgentRelease::query()->findOrFail($data['release_id']);
                             /** @var User $actor */
                             $actor = Filament::auth()->user();
-                            $rollout->scheduleOne($release, $record, $actor, $data['install_policy']);
+                            $rollout->scheduleOne($release, $record, $actor);
 
                             Notification::make()
                                 ->title('Agent update scheduled')

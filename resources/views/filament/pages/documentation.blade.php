@@ -519,12 +519,12 @@
                             <tbody>
                                 <tr><td>Hub backend</td><td><span class="docs-code">Laravel 13 / PHP 8.5</span></td><td>Modular domain services, transactions, encryption, scheduler, queues, and a stack familiar to the Opsifin team.</td></tr>
                                 <tr><td>Admin UI</td><td><span class="docs-code">Filament 5 / Livewire</span></td><td>Secure internal CRUD and monitoring without maintaining a separate SPA or duplicate API surface.</td></tr>
-                                <tr><td>Database</td><td><span class="docs-code">MySQL 9.7 LTS</span></td><td>Durable state, unique dedupe constraints, transactional claims, and operational familiarity.</td></tr>
-                                <tr><td>Cache, lock & queue runtime</td><td><span class="docs-code">Redis 8 / Horizon</span></td><td>Redis provides cache and scheduler overlap locks. Horizon processes background PDF refetch requests; source pulls and callbacks still execute synchronously from the scheduler.</td></tr>
+                                <tr><td>Database</td><td><span class="docs-code">MySQL 5.7</span></td><td>Shared Opsifin infrastructure with a dedicated schema, transactional per-printer claims, dedupe constraints, and familiar operations.</td></tr>
+                                <tr><td>Cache, lock & queue runtime</td><td><span class="docs-code">MySQL database queue</span></td><td>Database-backed locks prevent overlapping scheduler runs. A dedicated worker processes PDF refetch requests without blocking the operator.</td></tr>
                                 <tr><td>Agent</td><td><span class="docs-code">.NET 10 Worker Service</span></td><td>Native Windows service lifecycle and direct access to Win32 printer and spooler APIs.</td></tr>
                                 <tr><td>Print engine</td><td><span class="docs-code">PDFium + GDI</span></td><td>Vector PDF rendering without relying on a user's default desktop PDF application.</td></tr>
                                 <tr><td>Agent API</td><td><span class="docs-code">HTTPS JSON / OpenAPI 3.1</span></td><td>Versioned, testable contract; Agent only makes outbound connections and never receives Opsifin credentials.</td></tr>
-                                <tr><td>Deployment</td><td><span class="docs-code">Docker Compose</span></td><td>Repeatable local and server runtime for app, scheduler, Horizon, MySQL, and Redis.</td></tr>
+                                <tr><td>Deployment</td><td><span class="docs-code">Docker Compose</span></td><td>Repeatable runtime for the web app, database queue worker, and scheduler on the existing Opsifin Main network.</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -554,7 +554,7 @@
                             <thead><tr><th>Condition</th><th>Action</th><th>Why</th></tr></thead>
                             <tbody>
                                 <tr><td>Printer/Agent issue fixed; stored PDF is valid</td><td><strong>Retry printing</strong></td><td>Selects an active destination binding, reuses the evidence already validated by the Hub, and creates a new print run.</td></tr>
-                                <tr><td>PDF was regenerated or corrected in Opsifin</td><td><strong>Refetch and retry</strong></td><td>Selects an active destination binding, then queues Horizon to download and validate a fresh snapshot without blocking the operator.</td></tr>
+                                <tr><td>PDF was regenerated or corrected in Opsifin</td><td><strong>Refetch and retry</strong></td><td>Selects an active destination binding, then queues a background worker to download and validate a fresh snapshot without blocking the operator.</td></tr>
                                 <tr><td>Duplicate ignored while original job is active or complete</td><td><strong>No action</strong></td><td>The safety mechanism is preventing the same invoice version from being printed twice.</td></tr>
                                 <tr><td>Callback is pending</td><td><strong>Wait or diagnose source availability</strong></td><td>The outbox retries independently; do not create a second job.</td></tr>
                                 <tr><td>Simulation remains Printing for about one minute</td><td><strong>Wait for verification</strong></td><td>The Agent intentionally applies the same 60-second post-spool safety window used by physical printers before reporting Completed.</td></tr>

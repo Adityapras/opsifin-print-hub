@@ -14,6 +14,7 @@ use App\Filament\Resources\SourceConnections\SourceConnectionResource;
 use App\Filament\Resources\Tenants\Pages\CreateTenant;
 use App\Filament\Resources\Tenants\Pages\EditTenant;
 use App\Filament\Resources\Tenants\Pages\ListTenants;
+use App\Filament\Resources\Tenants\Pages\TenantSetupGuide;
 use App\Filament\Resources\Tenants\Pages\ViewTenant;
 use App\Filament\Resources\Tenants\Pages\ViewTenantIdentity;
 use App\Models\User;
@@ -63,7 +64,7 @@ final class TenantResource extends Resource
 
     protected static ?int $navigationSort = 10;
 
-    protected static ?SubNavigationPosition $subNavigationPosition = SubNavigationPosition::Top;
+    protected static ?SubNavigationPosition $subNavigationPosition = SubNavigationPosition::End;
 
     public static function form(Schema $schema): Schema
     {
@@ -341,42 +342,57 @@ final class TenantResource extends Resource
 
         return [
             NavigationItem::make('Overview')
+                ->key('overview')
                 ->icon(Heroicon::OutlinedShieldCheck)
                 ->url(self::getUrl('view', ['record' => $tenant]))
                 ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.tenants.view')),
+            NavigationItem::make('Setup guide')
+                ->key('setup-guide')
+                ->icon(Heroicon::OutlinedMap)
+                ->url(self::getUrl('setup', ['record' => $tenant]))
+                ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.tenants.setup')),
             NavigationItem::make('Integration identity')
+                ->key('integration-identity')
                 ->icon(Heroicon::OutlinedIdentification)
                 ->url(self::getUrl('identity', ['record' => $tenant]))
                 ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.tenants.identity')),
             NavigationItem::make('Connections')
+                ->key('connections')
                 ->icon(Heroicon::OutlinedCircleStack)
                 ->url(SourceConnectionResource::getUrl('index', $parameters))
                 ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.tenants.source-connections.*')),
             NavigationItem::make('Sites')
+                ->key('sites')
                 ->icon(Heroicon::OutlinedMapPin)
                 ->url(SiteResource::getUrl('index', $parameters))
                 ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.tenants.sites.*')),
             NavigationItem::make('Agents')
+                ->key('agents')
                 ->icon(Heroicon::OutlinedComputerDesktop)
                 ->url(AgentResource::getUrl('index', $parameters))
                 ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.tenants.agents.*')),
             NavigationItem::make('Printers')
+                ->key('printers')
                 ->icon(Heroicon::OutlinedPrinter)
                 ->url(PrinterResource::getUrl('index', $parameters))
                 ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.tenants.printers.*')),
             NavigationItem::make('Bindings')
+                ->key('bindings')
                 ->icon(Heroicon::OutlinedLink)
                 ->url(PrinterBindingResource::getUrl('index', $parameters))
                 ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.tenants.printer-bindings.*')),
             NavigationItem::make('Print jobs')
+                ->key('print-jobs')
                 ->icon(Heroicon::OutlinedQueueList)
                 ->url(PrintJobResource::getUrl('index', $parameters))
                 ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.tenants.print-jobs.*')),
             NavigationItem::make('Callbacks')
+                ->key('callbacks')
                 ->icon(Heroicon::OutlinedArrowPath)
                 ->url(CallbackOutboxResource::getUrl('index', $parameters))
                 ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.tenants.callback-outboxes.*')),
             NavigationItem::make('Audit log')
+                ->key('audit-log')
                 ->icon(Heroicon::OutlinedClipboardDocumentList)
                 ->url(AuditLogResource::getUrl('index', $parameters))
                 ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.tenants.audit-logs.*')),
@@ -389,6 +405,7 @@ final class TenantResource extends Resource
             'index' => ListTenants::route('/'),
             'create' => CreateTenant::route('/create'),
             'view' => ViewTenant::route('/{record}'),
+            'setup' => TenantSetupGuide::route('/{record}/setup'),
             'identity' => ViewTenantIdentity::route('/{record}/identity'),
             'edit' => EditTenant::route('/{record}/edit'),
         ];

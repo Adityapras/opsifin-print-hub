@@ -12,20 +12,14 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * @property string $version
- * @property string $channel
  * @property string $disk
  * @property string $path
  * @property string $original_name
  * @property int $size_bytes
  * @property string $sha256
- * @property string $signature_type
- * @property string|null $signature_value
- * @property string|null $signing_key_id
- * @property string|null $manifest_path
- * @property string|null $signature_subject
+ * @property string $install_policy
  * @property string|null $release_notes
  * @property string $status
- * @property CarbonImmutable $signature_verified_at
  * @property CarbonImmutable|null $published_at
  * @property CarbonImmutable|null $retired_at
  */
@@ -39,24 +33,20 @@ class AgentRelease extends Model
 
     public const STATUS_RETIRED = 'retired';
 
-    public const SIGNATURE_AUTHENTICODE = 'authenticode';
+    public const INSTALL_MANUAL = 'manual';
 
-    public const SIGNATURE_OPSIGO_INTERNAL = 'opsigo-rsa-sha256-v1';
+    public const INSTALL_AUTOMATIC = 'automatic';
+
+    public const INSTALL_POLICIES = [self::INSTALL_MANUAL, self::INSTALL_AUTOMATIC];
 
     protected $fillable = [
         'version',
-        'channel',
         'disk',
         'path',
         'original_name',
         'size_bytes',
         'sha256',
-        'signature_type',
-        'signature_value',
-        'signing_key_id',
-        'manifest_path',
-        'signature_subject',
-        'signature_verified_at',
+        'install_policy',
         'release_notes',
         'status',
         'created_by',
@@ -69,7 +59,6 @@ class AgentRelease extends Model
     {
         return [
             'size_bytes' => 'integer',
-            'signature_verified_at' => 'immutable_datetime',
             'published_at' => 'immutable_datetime',
             'retired_at' => 'immutable_datetime',
         ];

@@ -15,6 +15,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property string $source_identifier
  * @property int $printer_version
  * @property bool $is_active
+ * @property int $status_sync_attempts
+ * @property string|null $last_synced_printer_status
  * @property SourceConnection $sourceConnection
  * @property Printer $printer
  */
@@ -38,6 +40,11 @@ class PrinterBinding extends Model
         'next_pull_at',
         'last_pulled_at',
         'last_error',
+        'last_synced_printer_status',
+        'status_sync_attempts',
+        'next_status_sync_at',
+        'last_status_synced_at',
+        'last_status_sync_error',
     ];
 
     protected function casts(): array
@@ -47,6 +54,9 @@ class PrinterBinding extends Model
             'is_active' => 'boolean',
             'next_pull_at' => 'immutable_datetime',
             'last_pulled_at' => 'immutable_datetime',
+            'status_sync_attempts' => 'integer',
+            'next_status_sync_at' => 'immutable_datetime',
+            'last_status_synced_at' => 'immutable_datetime',
         ];
     }
 

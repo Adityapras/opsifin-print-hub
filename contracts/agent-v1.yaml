@@ -7,8 +7,9 @@ info:
     repo opsifin-print-hub dan opsifin-print-agent; lihat docs/PRD.md bagian
     "Kontrak API Agent ↔ Hub".
 
-    Aturan v1: perubahan hanya boleh menambah field opsional. Perubahan yang memecah
-    kompatibilitas menjadi /agent/v2.
+    Baseline v1 ini ditujukan untuk instalasi Agent baru. Migrasi OTA dari Agent lama
+    tidak termasuk ruang lingkup. Setelah baseline dipakai di produksi, perubahan yang
+    memecah kompatibilitas harus menjadi /agent/v2.
 servers:
   - url: https://hub.example/agent/v1
 
@@ -148,8 +149,7 @@ paths:
 
   /updates/{deployment_id}/package:
     get:
-      summary: Unduh MSI terverifikasi lewat URL sementara dari perintah update
-      security: []
+      summary: Unduh MSI lewat URL sementara untuk Agent pemilik deployment
       parameters:
         - name: deployment_id
           in: path
@@ -165,14 +165,16 @@ paths:
           schema: { type: integer }
       responses:
         '200':
-          description: MSI; Agent wajib mencocokkan ukuran, SHA-256, dan signature release sebelum instalasi
+          description: MSI; Agent wajib mencocokkan SHA-256 dari command sebelum instalasi
           content:
             application/x-msi:
               schema: { type: string, format: binary }
         '403':
           description: Signature URL salah atau kedaluwarsa
+        '401':
+          description: Token Agent tidak ada, salah, atau sudah dicabut
         '404':
-          description: Deployment dibatalkan, release tidak aktif, atau paket tidak tersedia
+          description: Deployment bukan milik Agent, dibatalkan, release tidak aktif, atau paket tidak tersedia
 
   /commands/{command_id}/result:
     post:
@@ -356,12 +358,10 @@ components:
         args:
           type: object
           description: |
-            update legacy: { url, sha256, signature: authenticode, version, install_policy, release_notes }
-            update internal: { url, sha256, size_bytes, signature_scheme, signature, signing_key_id,
-              channel, version, install_policy, release_notes }
-            signature_scheme internal saat ini: opsigo-rsa-sha256-v1. Field baru bersifat opsional
-            agar Agent sebelum bridge tetap kompatibel dengan command legacy.
-            install_policy: manual | automatic. Automatic tetap menunggu antrean/cetak aktif selesai.
+            update: { version, url, sha256, install_policy, release_notes }
+            version, url, dan sha256 wajib. install_policy opsional dengan default manual dan
+            bernilai manual atau automatic. release_notes opsional. Kedua policy tetap menghentikan
+            claim baru dan menunggu print aktif serta event delivery selesai sebelum instalasi.
             test_page: { printer_id }
             upload_logs: { hours }
             rotate_secret: { new_secret } — secret lama berlaku 10 menit setelah secret baru dipakai

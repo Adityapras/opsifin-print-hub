@@ -1,0 +1,73 @@
+openapi: 3.1.0
+info:
+  title: Opsifin Main Print Integration
+  version: 1.0.0
+  description: Contract used by Opsifin Print Hub after a Source Connection identity is verified.
+servers:
+  - url: https://opsifin.example/opsifin_api_print
+security:
+  - basicAuth: []
+paths:
+  /identity:
+    get:
+      summary: Read the permanent integration identity
+      responses:
+        '200':
+          description: Identity of this Opsifin Main instance.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [integration_id]
+                properties:
+                  integration_id:
+                    type: string
+                    format: uuid
+  /PrinterStatus:
+    post:
+      summary: Update the latest printer availability
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [PrinterName, Identifier, PrinterStatus]
+              properties:
+                PrinterName:
+                  type: string
+                Identifier:
+                  type: string
+                PrinterStatus:
+                  type: string
+      responses:
+        '200':
+          description: Status accepted.
+  /resetPrinterConfiguration:
+    post:
+      summary: Remove printer configuration during an authorized tenant reinitialization
+      description: Deletes printer routing configuration only. Invoice and financial data are never changed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [IntegrationId, Reason]
+              properties:
+                IntegrationId:
+                  type: string
+                  format: uuid
+                Reason:
+                  type: string
+                  minLength: 10
+      responses:
+        '200':
+          description: Printer configuration was removed, or was already empty.
+        '409':
+          description: IntegrationId does not match this Opsifin Main instance.
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic

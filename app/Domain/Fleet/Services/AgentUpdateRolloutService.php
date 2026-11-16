@@ -8,7 +8,6 @@ use App\Domain\Platform\Models\AgentRelease;
 use App\Domain\Platform\Services\AgentReleaseService;
 use App\Models\User;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\URL;
 use Illuminate\Validation\ValidationException;
 
 final class AgentUpdateRolloutService
@@ -16,17 +15,17 @@ final class AgentUpdateRolloutService
     public function __construct(
         private readonly AgentCommandService $commands,
         private readonly AgentReleaseService $releases,
+        private readonly AgentUpdateCommandPayload $payloads,
     ) {}
 
     public function scheduleOne(
         AgentRelease $release,
         Agent $agent,
         User $actor,
-        string $installPolicy = 'automatic',
     ): AgentUpdateDeployment {
-        $this->assertCanSchedule($release, $agent, $installPolicy);
+        $this->assertCanSchedule($release, $agent);
 
-        return AgentUpdateDeployment::query()->getConnection()->transaction(function () use ($release, $agent, $actor, $installPolicy): AgentUpdateDeployment {
+        return AgentUpdateDeployment::query()->getConnection()->transaction(function () use ($release, $agent, $actor): AgentUpdateDeployment {
             $deployment = AgentUpdateDeployment::query()->firstOrNew([
                 'agent_release_id' => $release->getKey(),
                 'agent_id' => $agent->getKey(),
@@ -39,7 +38,7 @@ final class AgentUpdateRolloutService
             $deployment->fill([
                 'agent_command_id' => null,
                 'scheduled_by' => $actor->getKey(),
-                'install_policy' => $installPolicy,
+                'install_policy' => $release->install_policy,
                 'status' => 'pending',
                 'progress_percent' => 0,
                 'message' => null,
@@ -51,33 +50,7 @@ final class AgentUpdateRolloutService
                 'last_observed_at' => now(),
             ])->save();
 
-            $downloadUrl = URL::temporarySignedRoute(
-                'agent.v1.updates.package',
-                now()->addMinutes((int) config('print_hub.agent_updates.download_url_ttl_minutes')),
-                ['deploymentId' => $deployment->getKey()],
-            );
-
-            $args = [
-                'version' => $release->version,
-                'url' => $downloadUrl,
-                'sha256' => $release->sha256,
-                'install_policy' => $installPolicy,
-                'release_notes' => $release->release_notes,
-            ];
-            if ($release->signature_type === AgentRelease::SIGNATURE_AUTHENTICODE) {
-                // Marker lama dipertahankan agar Agent sebelum bridge tetap dapat diperbarui.
-                $args['signature'] = AgentRelease::SIGNATURE_AUTHENTICODE;
-            } else {
-                $args += [
-                    'signature_scheme' => $release->signature_type,
-                    'signature' => $release->signature_value,
-                    'signing_key_id' => $release->signing_key_id,
-                    'size_bytes' => $release->size_bytes,
-                    'channel' => $release->channel,
-                ];
-            }
-
-            $command = $this->commands->dispatch($agent, 'update', $args);
+            $command = $this->commands->dispatch($agent, 'update', $this->payloads->build($deployment));
 
             $deployment->update(['agent_command_id' => $command->getKey()]);
 
@@ -91,7 +64,7 @@ final class AgentUpdateRolloutService
         $eligible = $this->eligibleAgents($release);
         $count = $eligible->isEmpty() ? 0 : max(1, (int) ceil($eligible->count() * 0.10));
 
-        return $this->scheduleMany($release, $eligible->take($count), $actor, 'automatic', 'rollout.pilot_scheduled');
+        return $this->scheduleMany($release, $eligible->take($count), $actor, 'rollout.pilot_scheduled');
     }
 
     /** @return Collection<int, AgentUpdateDeployment> */
@@ -101,7 +74,6 @@ final class AgentUpdateRolloutService
             $release,
             $this->eligibleAgents($release),
             $actor,
-            'automatic',
             'rollout.remaining_scheduled',
         );
     }
@@ -109,18 +81,11 @@ final class AgentUpdateRolloutService
     /** @return Collection<int, Agent> */
     private function eligibleAgents(AgentRelease $release): Collection
     {
-        $internalSignatureMinimum = (string) config(
-            'print_hub.agent_updates.internal_signature_min_agent_version',
-            '0.3.12',
-        );
-
         return Agent::query()
             ->whereNull('revoked_at')
             ->orderBy('id')
             ->get()
             ->filter(fn (Agent $agent): bool => version_compare($agent->version, $release->version, '<'))
-            ->filter(fn (Agent $agent): bool => $release->signature_type !== AgentRelease::SIGNATURE_OPSIGO_INTERNAL
-                || version_compare($agent->version, $internalSignatureMinimum, '>='))
             ->filter(fn (Agent $agent): bool => ! AgentUpdateDeployment::query()
                 ->where('agent_release_id', $release->getKey())
                 ->where('agent_id', $agent->getKey())
@@ -137,11 +102,10 @@ final class AgentUpdateRolloutService
         AgentRelease $release,
         Collection $agents,
         User $actor,
-        string $installPolicy,
         string $eventType,
     ): Collection {
         $deployments = $agents->map(
-            fn (Agent $agent): AgentUpdateDeployment => $this->scheduleOne($release, $agent, $actor, $installPolicy),
+            fn (Agent $agent): AgentUpdateDeployment => $this->scheduleOne($release, $agent, $actor),
         );
 
         $this->releases->event($release, $actor, $eventType, [
@@ -151,29 +115,14 @@ final class AgentUpdateRolloutService
         return $deployments;
     }
 
-    private function assertCanSchedule(AgentRelease $release, Agent $agent, string $installPolicy): void
+    private function assertCanSchedule(AgentRelease $release, Agent $agent): void
     {
         if ($release->status !== AgentRelease::STATUS_PUBLISHED) {
             throw ValidationException::withMessages(['release' => 'Only published releases can be scheduled.']);
         }
 
-        if (! in_array($installPolicy, ['manual', 'automatic'], true)) {
-            throw ValidationException::withMessages(['install_policy' => 'Choose manual or automatic.']);
-        }
-
         if ($agent->revoked_at !== null) {
             throw ValidationException::withMessages(['agent' => 'A revoked Agent cannot receive updates.']);
-        }
-
-        $internalSignatureMinimum = (string) config(
-            'print_hub.agent_updates.internal_signature_min_agent_version',
-            '0.3.12',
-        );
-        if ($release->signature_type === AgentRelease::SIGNATURE_OPSIGO_INTERNAL
-            && version_compare($agent->version, $internalSignatureMinimum, '<')) {
-            throw ValidationException::withMessages([
-                'agent' => "Install the Authenticode bridge Agent {$internalSignatureMinimum} before scheduling an internally signed release.",
-            ]);
         }
 
         if (version_compare($agent->version, $release->version, '>=')) {

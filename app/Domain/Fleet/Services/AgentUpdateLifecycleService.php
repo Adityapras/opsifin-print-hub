@@ -5,10 +5,11 @@ namespace App\Domain\Fleet\Services;
 use App\Domain\Fleet\Models\Agent;
 use App\Domain\Fleet\Models\AgentCommand;
 use App\Domain\Fleet\Models\AgentUpdateDeployment;
-use Illuminate\Support\Facades\URL;
 
 final class AgentUpdateLifecycleService
 {
+    public function __construct(private readonly AgentUpdateCommandPayload $payloads) {}
+
     /** @var array<int, string> */
     private const REPORTED_STATUSES = [
         'downloading',
@@ -25,15 +26,9 @@ final class AgentUpdateLifecycleService
             return;
         }
 
-        // URL dibuat ulang tepat saat Agent online agar mesin yang lama offline
-        // tidak menerima tautan paket yang sudah kedaluwarsa.
-        $arguments = $command->args ?? [];
-        $arguments['url'] = URL::temporarySignedRoute(
-            'agent.v1.updates.package',
-            now()->addMinutes((int) config('print_hub.agent_updates.download_url_ttl_minutes')),
-            ['deploymentId' => $deployment->getKey()],
-        );
-        $command->update(['args' => $arguments]);
+        // Payload dibangun ulang tepat saat Agent online agar URL belum kedaluwarsa
+        // dan command lama tidak membawa field signature dari baseline sebelumnya.
+        $command->update(['args' => $this->payloads->build($deployment)]);
     }
 
     public function commandDelivered(AgentCommand $command): void

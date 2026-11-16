@@ -136,6 +136,28 @@ final class PrinterBindingResource extends Resource
                     ->limit(36)
                     ->color(fn (?string $state): string => filled($state) ? 'danger' : 'success')
                     ->toggleable(),
+                TextColumn::make('last_synced_printer_status')
+                    ->label('Opsifin status')
+                    ->badge()
+                    ->placeholder('Not synced')
+                    ->color(fn (?string $state): string => match ($state) {
+                        'ONLINE', 'READY', 'IDLE' => 'success',
+                        'OFFLINE', 'ERROR', 'PAPER_OUT', 'PAPER_JAM', 'NO_TONER' => 'danger',
+                        default => 'gray',
+                    })
+                    ->toggleable(),
+                TextColumn::make('last_status_synced_at')
+                    ->label('Status sent')
+                    ->formatStateUsing(fn (mixed $state): string => DateTimeDisplay::relativeWithClock($state, self::tenantTimezone()))
+                    ->placeholder('Never')
+                    ->sortable()
+                    ->toggleable(),
+                TextColumn::make('last_status_sync_error')
+                    ->label('Status sync issue')
+                    ->placeholder('Normal')
+                    ->limit(36)
+                    ->color(fn (?string $state): string => filled($state) ? 'danger' : 'success')
+                    ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
                 SelectFilter::make('source_connection_id')

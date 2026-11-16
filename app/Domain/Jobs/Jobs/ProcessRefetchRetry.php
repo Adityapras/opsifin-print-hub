@@ -53,7 +53,7 @@ final class ProcessRefetchRetry implements ShouldBeUnique, ShouldQueue
                 $retries->processRefetchRequest($scopedRequest);
             }
         } finally {
-            // Worker Horizon bersifat long-lived; konteks tenant tidak boleh bocor ke job berikutnya.
+            // Queue worker bersifat long-lived; konteks tenant tidak boleh bocor ke job berikutnya.
             $context->clear();
         }
     }

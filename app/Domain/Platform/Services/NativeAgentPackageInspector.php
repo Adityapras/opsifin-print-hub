@@ -7,34 +7,10 @@ use Symfony\Component\Process\Process;
 
 final class NativeAgentPackageInspector implements AgentPackageInspector
 {
-    public function inspect(string $absolutePath, bool $verifyAuthenticode = true): AgentPackageInspection
+    public function inspect(string $absolutePath): AgentPackageInspection
     {
         if (! is_file($absolutePath)) {
             throw new RuntimeException('The uploaded MSI package is no longer available.');
-        }
-
-        $signatureSubject = null;
-        if ($verifyAuthenticode) {
-            $arguments = ['osslsigncode', 'verify'];
-            $caFile = config('print_hub.agent_updates.authenticode_ca_file');
-            if (is_string($caFile) && $caFile !== '') {
-                $arguments[] = '-CAfile';
-                $arguments[] = $caFile;
-            }
-            $arguments[] = '-in';
-            $arguments[] = $absolutePath;
-
-            $signature = new Process($arguments);
-            $signature->setTimeout(60);
-            $signature->run();
-            $signatureOutput = trim($signature->getOutput()."\n".$signature->getErrorOutput());
-            if (! $signature->isSuccessful()
-                || ! str_contains(strtolower($signatureOutput), 'signature verification: ok')) {
-                throw new RuntimeException('Authenticode verification failed. The package was not published. '.$signatureOutput);
-            }
-
-            preg_match('/^\s*Subject:\s*(.+)$/mi', $signatureOutput, $subjectMatch);
-            $signatureSubject = trim($subjectMatch[1] ?? 'Authenticode signature verified');
         }
 
         $properties = new Process(['msiinfo', 'export', $absolutePath, 'Property']);
@@ -49,10 +25,7 @@ final class NativeAgentPackageInspector implements AgentPackageInspector
             throw new RuntimeException('The MSI does not contain a ProductVersion property.');
         }
 
-        return new AgentPackageInspection(
-            $productVersion,
-            $signatureSubject,
-        );
+        return new AgentPackageInspection($productVersion);
     }
 
     private function property(string $table, string $name): ?string

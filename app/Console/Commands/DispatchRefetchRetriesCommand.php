@@ -10,7 +10,7 @@ final class DispatchRefetchRetriesCommand extends Command
 {
     protected $signature = 'hub:dispatch-refetch-retries {--limit=100 : Maximum requests to recover per run}';
 
-    protected $description = 'Dispatch pending or stale PDF refetch requests to Horizon';
+    protected $description = 'Dispatch pending or stale PDF refetch requests to the background queue';
 
     public function handle(): int
     {
@@ -28,7 +28,8 @@ final class DispatchRefetchRetriesCommand extends Command
             ->get(['id']);
 
         foreach ($requests as $request) {
-            // ShouldBeUnique mencegah recovery scheduler menggandakan job yang masih ada di Redis.
+            // Lock unik pada cache database mencegah recovery scheduler
+            // menggandakan request yang masih diproses worker.
             ProcessRefetchRetry::dispatch((string) $request->getKey());
         }
 

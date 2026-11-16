@@ -20,13 +20,14 @@ Route::prefix('agent/v1')->group(function (): void {
         });
 
         Route::post('commands/{commandId}/result', CommandResultController::class);
+
+        Route::get('updates/{deploymentId}/package', DownloadUpdatePackageController::class)
+            ->middleware('signed')
+            ->name('agent.v1.updates.package');
     });
 
     Route::get('documents/{documentId}', DownloadDocumentController::class)
         ->middleware('signed')
         ->name('agent.v1.documents.show');
 
-    Route::get('updates/{deploymentId}/package', DownloadUpdatePackageController::class)
-        ->middleware('signed')
-        ->name('agent.v1.updates.package');
 });

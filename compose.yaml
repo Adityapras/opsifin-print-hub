@@ -1,4 +1,4 @@
-# Lingkungan dev lokal Opsifin Print Hub.
+# Lingkungan lokal Opsifin Print Hub yang memakai MySQL milik network opsifin-main.
 #   docker compose up -d --build
 #   docker compose exec app php artisan migrate
 # Container berjalan dengan UID/GID host supaya file yang dibuat artisan/composer
@@ -7,13 +7,12 @@ x-php: &php
   build: docker/php
   image: opsifin-print-hub-php:dev
   user: "${UID:-1000}:${GID:-1000}"
+  restart: unless-stopped
   volumes:
     - .:/app
-  depends_on:
-    mysql:
-      condition: service_healthy
-    redis:
-      condition: service_healthy
+  networks:
+    - hub
+    - opsifin-main
 
 services:
   app:
@@ -22,41 +21,16 @@ services:
     ports:
       - "${APP_PORT:-8000}:8000"
 
-  horizon:
+  queue-worker:
     <<: *php
-    command: php artisan horizon
+    command: php artisan queue:work database --queue=default --sleep=1 --tries=1 --timeout=60 --max-time=3600
 
   scheduler:
     <<: *php
     command: php artisan schedule:work
 
-  mysql:
-    image: mysql:9.7
-    environment:
-      MYSQL_DATABASE: ${DB_DATABASE:-print_hub}
-      MYSQL_USER: ${DB_USERNAME:-print_hub}
-      MYSQL_PASSWORD: ${DB_PASSWORD:-secret}
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root}
-    ports:
-      - "${FORWARD_DB_PORT:-33060}:3306"
-    volumes:
-      - mysql-data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${DB_ROOT_PASSWORD:-root}"]
-      interval: 5s
-      retries: 20
-
-  redis:
-    image: redis:8-alpine
-    ports:
-      - "${FORWARD_REDIS_PORT:-63790}:6379"
-    volumes:
-      - redis-data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      retries: 20
-
-volumes:
-  mysql-data:
-  redis-data:
+networks:
+  hub:
+  opsifin-main:
+    external: true
+    name: opsifin-main-networks

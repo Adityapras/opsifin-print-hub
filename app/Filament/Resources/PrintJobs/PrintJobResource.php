@@ -271,7 +271,7 @@ final class PrintJobResource extends Resource
             ->label('Refetch and retry')
             ->icon(Heroicon::OutlinedArrowDownTray)
             ->modalHeading('Download a fresh PDF and retry?')
-            ->modalDescription('Use this after the PDF was corrected in Opsifin. Horizon downloads and validates it in the background while the previous evidence remains available.')
+            ->modalDescription('Use this after the PDF was corrected in Opsifin. A background worker downloads and validates it while the previous evidence remains available.')
             ->modalSubmitActionLabel('Queue refetch');
     }
 
@@ -328,7 +328,7 @@ final class PrintJobResource extends Resource
                         ->title($mode === 'retryPrinting' ? 'Print job queued again' : 'PDF refetch queued')
                         ->body($mode === 'retryPrinting'
                             ? 'The stored PDF will be used for the next print attempt.'
-                            : 'Horizon will download and validate a fresh PDF. The job remains failed until that background step succeeds.')
+                            : 'The background worker will download and validate a fresh PDF. The job remains failed until that step succeeds.')
                         ->success()
                         ->send();
                 } catch (DomainException $exception) {

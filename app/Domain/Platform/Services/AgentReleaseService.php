@@ -12,16 +12,13 @@ final class AgentReleaseService
 {
     public function __construct(
         private readonly AgentPackageInspector $inspector,
-        private readonly AgentReleaseManifestVerifier $manifestVerifier,
     ) {}
 
     /**
      * @param array{
      *     version: string,
-     *     channel: string,
      *     path: string,
-     *     signature_type?: string|null,
-     *     signature_manifest_path?: string|null,
+     *     install_policy?: string|null,
      *     release_notes?: string|null,
      *     original_name?: string|null
      * } $data
@@ -35,7 +32,8 @@ final class AgentReleaseService
 
         $disk = 'local';
         $path = $data['path'];
-        if (! str_ends_with(strtolower($path), '.msi') || ! Storage::disk($disk)->exists($path)) {
+        $originalName = ($data['original_name'] ?? null) ?: basename($path);
+        if (! str_ends_with(strtolower($originalName), '.msi') || ! Storage::disk($disk)->exists($path)) {
             throw ValidationException::withMessages(['path' => 'Upload a valid MSI package.']);
         }
 
@@ -50,19 +48,13 @@ final class AgentReleaseService
             throw ValidationException::withMessages(['path' => 'The MSI SHA-256 could not be calculated.']);
         }
 
-        $signatureType = ($data['signature_type'] ?? null) ?: AgentRelease::SIGNATURE_AUTHENTICODE;
-        if (! in_array($signatureType, [
-            AgentRelease::SIGNATURE_AUTHENTICODE,
-            AgentRelease::SIGNATURE_OPSIGO_INTERNAL,
-        ], true)) {
-            throw ValidationException::withMessages(['signature_type' => 'Choose a supported release verification method.']);
+        $installPolicy = ($data['install_policy'] ?? null) ?: AgentRelease::INSTALL_MANUAL;
+        if (! in_array($installPolicy, AgentRelease::INSTALL_POLICIES, true)) {
+            throw ValidationException::withMessages(['install_policy' => 'Choose manual or automatic installation.']);
         }
 
         try {
-            $inspection = $this->inspector->inspect(
-                Storage::disk($disk)->path($path),
-                $signatureType === AgentRelease::SIGNATURE_AUTHENTICODE,
-            );
+            $inspection = $this->inspector->inspect(Storage::disk($disk)->path($path));
         } catch (\RuntimeException $exception) {
             throw ValidationException::withMessages(['path' => $exception->getMessage()]);
         }
@@ -73,49 +65,15 @@ final class AgentReleaseService
             ]);
         }
 
-        $manifestPath = null;
-        $manifest = null;
-        if ($signatureType === AgentRelease::SIGNATURE_OPSIGO_INTERNAL) {
-            $manifestPath = $data['signature_manifest_path'] ?? null;
-            if (! is_string($manifestPath)
-                || ! str_ends_with(strtolower($manifestPath), '.json')
-                || ! Storage::disk($disk)->exists($manifestPath)) {
-                throw ValidationException::withMessages([
-                    'signature_manifest_path' => 'Upload the JSON release manifest created by Opsifin.Agent.ReleaseSigner.',
-                ]);
-            }
-
-            try {
-                $manifest = $this->manifestVerifier->verify(
-                    Storage::disk($disk)->path($manifestPath),
-                    $version,
-                    $data['channel'],
-                    $size,
-                    $sha256,
-                );
-            } catch (\RuntimeException $exception) {
-                throw ValidationException::withMessages([
-                    'signature_manifest_path' => $exception->getMessage(),
-                ]);
-            }
-        }
-
-        return AgentRelease::query()->getConnection()->transaction(function () use ($data, $actor, $disk, $path, $size, $version, $inspection, $sha256, $signatureType, $manifestPath, $manifest): AgentRelease {
+        return AgentRelease::query()->getConnection()->transaction(function () use ($data, $actor, $disk, $path, $originalName, $size, $version, $sha256, $installPolicy): AgentRelease {
             $release = AgentRelease::query()->create([
                 'version' => $version,
-                'channel' => $data['channel'],
                 'disk' => $disk,
                 'path' => $path,
-                'original_name' => ($data['original_name'] ?? null) ?: basename($path),
+                'original_name' => $originalName,
                 'size_bytes' => $size,
                 'sha256' => $sha256,
-                'signature_type' => $signatureType,
-                'signature_value' => $manifest?->signature,
-                'signing_key_id' => $manifest?->signingKeyId,
-                'manifest_path' => $manifestPath,
-                'signature_subject' => $inspection->signatureSubject
-                    ?? ($manifest === null ? null : "Opsigo internal release key {$manifest->signingKeyId}"),
-                'signature_verified_at' => now(),
+                'install_policy' => $installPolicy,
                 'release_notes' => $data['release_notes'] ?? null,
                 'status' => AgentRelease::STATUS_DRAFT,
                 'created_by' => $actor->getKey(),
@@ -125,8 +83,7 @@ final class AgentReleaseService
                 'version' => $version,
                 'sha256' => $release->sha256,
                 'size_bytes' => $size,
-                'signature_type' => $signatureType,
-                'signing_key_id' => $manifest?->signingKeyId,
+                'install_policy' => $installPolicy,
             ]);
 
             return $release;

@@ -16,7 +16,6 @@ use App\Http\Middleware\SetFilamentTenantContext;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Route;
-use Illuminate\Support\Facades\Gate;
 use Livewire\Livewire;
 
 function grantPanelMembership(User $user, Tenant $tenant, string $role): Membership
@@ -137,11 +136,28 @@ it('hanya menampilkan data tenant yang ada di URL panel', function () {
     $this->actingAs($user)
         ->get('/admin/tenants/panel-a/source-connections')
         ->assertOk()
-        ->assertSee('fi-page-sub-navigation-tabs', false)
+        ->assertSee('fi-page-has-sub-navigation-end', false)
+        ->assertSee('fi-page-sub-navigation-sidebar', false)
+        ->assertSee('Source Connections')
+        ->assertSee('What to configure')
         ->assertSee('Sumber Tenant A')
         ->assertDontSee('Sumber Tenant B');
 
     expect(app(TenantContext::class)->id())->toBeNull();
+});
+
+it('menampilkan setup guide visual dengan readiness tenant', function () {
+    $tenant = Tenant::query()->create(['code' => 'guided', 'name' => 'Guided Tenant']);
+    $admin = User::factory()->create(['is_platform_admin' => true]);
+
+    $this->actingAs($admin)
+        ->get('/admin/tenants/guided/setup')
+        ->assertOk()
+        ->assertSee('End-to-end tenant setup')
+        ->assertSee('Register the integration identity')
+        ->assertSee('Connect and verify Opsifin Main')
+        ->assertSee('Run the end-to-end print test')
+        ->assertSee('tenant-setup-flow', false);
 });
 
 it('menolak user membuka tenant tanpa membership', function () {
@@ -250,9 +266,15 @@ it('merender observabilitas job dan callback tenant', function () {
     $this->actingAs($user)
         ->get('/admin/tenants/operations')
         ->assertOk()
-        ->assertSee('fi-page-sub-navigation-tabs', false)
+        ->assertSee('fi-page-has-sub-navigation-end', false)
+        ->assertSee('fi-page-sub-navigation-sidebar', false)
+        ->assertDontSee('fi-page-sub-navigation-tabs', false)
         ->assertSee('Overview')
+        ->assertSee('Setup guide')
         ->assertSee('Integration identity')
+        ->assertDontSee('Review tenant status, estate totals, and routing topology.')
+        ->assertSee('What to configure')
+        ->assertSee('What to monitor')
         ->assertSee('Tenant overview')
         ->assertSee('Managed estate')
         ->assertSee('/admin/tenants/operations/source-connections', false)
@@ -313,10 +335,8 @@ it('merender control plane global dan membatasi menu administratif', function ()
     $this->get('/admin/platform-settings')
         ->assertOk()
         ->assertSee('Internal team only')
-        ->assertSee('Open Horizon')
-        ->assertSee('/horizon', false);
-
-    expect(Gate::forUser($platformAdmin)->allows('viewHorizon'))->toBeTrue();
+        ->assertSee('Database queue')
+        ->assertDontSee('/horizon', false);
 
     $this->get('/admin/tenants/control-plane/identity')
         ->assertOk()
@@ -329,8 +349,6 @@ it('merender control plane global dan membatasi menu administratif', function ()
     $this->actingAs($operator)
         ->get('/admin/internal-team')
         ->assertForbidden();
-
-    expect(Gate::forUser($operator)->allows('viewHorizon'))->toBeFalse();
 
     $this->get('/admin/platform-settings')
         ->assertForbidden();
