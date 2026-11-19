@@ -58,6 +58,12 @@ final class PrinterBindingService
 
         $binding->fill($attributes);
 
+        if ($binding->isDirty('source_connection_id')) {
+            throw new PrinterBindingSyncException(
+                'The Opsifin connection cannot be changed after a binding is created. Create a new binding instead.',
+            );
+        }
+
         if ($binding->is_active || $binding->isDirty(self::SYNC_FIELDS)) {
             $connection = SourceConnection::query()->findOrFail($binding->source_connection_id);
             $this->ensureIdentityVerified($connection);

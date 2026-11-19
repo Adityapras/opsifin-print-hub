@@ -24,7 +24,10 @@ final class CallbackOutboxService
             return null;
         }
 
-        $connection = $binding->sourceConnection;
+        $job->loadMissing('sourceConnection');
+        // Binding boleh berpindah ke printer pengganti saat retry, tetapi tujuan
+        // callback tidak boleh ikut berubah dari Opsifin yang membuat job.
+        $connection = $job->sourceConnection ?? $binding->sourceConnection;
         $result = $job->state === PrintJobState::Failed ? 'Failed' : 'Success';
         $payload = [
             'InvNo' => $job->inv_no,

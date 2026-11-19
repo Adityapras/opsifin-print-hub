@@ -1,6 +1,6 @@
 # Opsifin Print Hub — Progress Memory
 
-Last updated: 2026-11-13 (Asia/Jakarta)
+Last updated: 2026-11-17 (Asia/Jakarta)
 
 Dokumen ini menjadi handoff ringkas untuk Codex/agent berikutnya. Baca `AGENTS.md`,
 `docs/PRD.md`, dan `docs/PRD-ringkasan-keputusan.md` sebelum mengubah perilaku domain.
@@ -93,6 +93,13 @@ Dokumen ini menjadi handoff ringkas untuk Codex/agent berikutnya. Baca `AGENTS.m
 - Tabel Printer Bindings menyediakan aksi `Sync to Opsifin` untuk menyinkronkan ulang
   binding lama tanpa mengubah datanya.
 - Pull `/getData`, dedupe job, validasi PDF, snapshot, SHA-256, dan page count.
+- Satu tenant dapat memiliki beberapa Source Connection yang mewakili instance Opsifin
+  dalam batas bisnis yang sama, misalnya Production dan Cabang. Setiap job menyimpan
+  `source_connection_id` asal secara immutable dan memakai dedupe key per source, sehingga
+  nomor invoice yang sama dari dua instance tetap menjadi dua job yang valid.
+- Callback dan refetch mengambil connection dari snapshot source pada Print Job, bukan
+  dari binding yang mutable. Binding yang sudah dibuat tidak dapat dipindahkan ke Source
+  Connection lain; perubahan route lintas source harus menggunakan binding baru.
 - Source pull sekarang busy-aware per Printer Binding. Binding yang masih memiliki job
   `received`/`queued`/`claimed`/`printing` atau callback `pending` tidak memanggil
   `/getData` lagi; binding dan tenant lain tetap diproses. Setelah batch terminal dan
@@ -196,6 +203,10 @@ Dokumen ini menjadi handoff ringkas untuk Codex/agent berikutnya. Baca `AGENTS.m
 - Modal Print Job menampilkan timeline append-only dalam panel scroll berukuran tetap,
   urutan event terbaru di atas, reason/mode retry langsung terbaca, dan payload teknis
   collapsed. History tetap lengkap tanpa membuat modal memanjang tanpa batas.
+- Tenant Admin dapat menghapus permanen job terminal beserta attempt, timeline, callback,
+  retry history, metadata dokumen, dan seluruh snapshot PDF job. Job dengan lease Agent,
+  callback pending, atau refetch aktif ditolak; nomor dokumen dan alasan wajib dikonfirmasi.
+  Audit Log `print_job.deleted` tetap dipertahankan agar hard delete dapat ditelusuri.
 - Internal Team & Access mengelola akun tim Opsifin, status Platform Admin, serta role
   tenant_admin/operator/viewer per tenant. Client tidak boleh dibuat sebagai user Hub.
 - Platform Settings saat ini merupakan halaman read-only untuk fakta control plane dan

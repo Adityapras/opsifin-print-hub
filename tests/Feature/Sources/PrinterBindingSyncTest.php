@@ -124,6 +124,30 @@ it('mengirim nilai nama lama saat routing binding diubah', function () {
         && $request['Identifier'] === 'CAB-01');
 });
 
+it('menolak memindahkan binding yang sudah dibuat ke source connection lain', function () {
+    $fixture = bindingSyncFixture('binding-source-immutable');
+    $binding = PrinterBinding::query()->create(bindingAttributes($fixture));
+    $otherConnection = SourceConnection::query()->create([
+        'name' => 'Another Opsifin',
+        'base_url' => 'https://binding-source-other.test/rest/autoprint',
+        'username' => 'rest-user',
+        'password_enc' => 'rest-password',
+    ]);
+    $otherConnection->forceFill([
+        'identity_status' => SourceIdentityStatus::Verified,
+        'remote_integration_id' => $fixture['tenant']->integration_id,
+        'identity_verified_at' => now(),
+    ])->saveQuietly();
+    Http::fake();
+
+    expect(fn () => app(PrinterBindingService::class)->update($binding, [
+        'source_connection_id' => $otherConnection->getKey(),
+    ]))->toThrow(PrinterBindingSyncException::class, 'cannot be changed');
+
+    expect($binding->fresh()->source_connection_id)->toBe($fixture['connection']->getKey());
+    Http::assertNothingSent();
+});
+
 it('tidak memanggil printerName ketika hanya status aktif binding berubah', function () {
     $fixture = bindingSyncFixture('binding-toggle');
     $binding = PrinterBinding::query()->create(bindingAttributes($fixture));

@@ -7,6 +7,7 @@ use App\Domain\Fleet\Models\Agent;
 use App\Domain\Fleet\Models\Printer;
 use App\Domain\Jobs\Enums\PrintJobState;
 use App\Domain\Sources\Models\PrinterBinding;
+use App\Domain\Sources\Models\SourceConnection;
 use App\Domain\Tenancy\Concerns\BelongsToTenant;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -19,6 +20,8 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
  * @property string $printer_id
  * @property string|null $document_id
  * @property string|null $binding_id
+ * @property string|null $source_connection_id
+ * @property string|null $dedupe_key
  * @property string|null $lease_agent_id
  * @property array<string, mixed> $source_payload
  * @property PrintJobState $state
@@ -30,6 +33,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
  * @property CarbonImmutable|null $reported_at
  * @property Document|null $document
  * @property Printer $printer
+ * @property SourceConnection|null $sourceConnection
  * @property PrintJobRetryRequest|null $latestRetryRequest
  */
 class PrintJob extends Model
@@ -45,6 +49,8 @@ class PrintJob extends Model
         'printer_id',
         'document_id',
         'binding_id',
+        'source_connection_id',
+        'dedupe_key',
         'inv_no',
         'item_type',
         'version_inv',
@@ -99,6 +105,12 @@ class PrintJob extends Model
     public function binding(): BelongsTo
     {
         return $this->belongsTo(PrinterBinding::class, 'binding_id');
+    }
+
+    /** @return BelongsTo<SourceConnection, $this> */
+    public function sourceConnection(): BelongsTo
+    {
+        return $this->belongsTo(SourceConnection::class);
     }
 
     /** @return BelongsTo<Agent, $this> */

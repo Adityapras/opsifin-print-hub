@@ -233,6 +233,7 @@ it('merender observabilitas job dan callback tenant', function () {
         ]);
         $job = PrintJob::query()->create([
             'binding_id' => $binding->getKey(),
+            'source_connection_id' => $source->getKey(),
             'printer_id' => $printer->getKey(),
             'inv_no' => 'INV-PANEL-001',
             'item_type' => 'INV',
@@ -285,8 +286,19 @@ it('merender observabilitas job dan callback tenant', function () {
         ->get('/admin/tenants/operations/print-jobs')
         ->assertOk()
         ->assertSee('INV-PANEL-001')
+        ->assertSee('Operations Source')
+        ->assertSee('Document type')
         ->assertSee('PAPER_OUT')
-        ->assertSee('Activity');
+        ->assertSee('Activity')
+        ->assertDontSee('Delete permanently');
+
+    $tenantAdmin = User::factory()->create();
+    grantPanelMembership($tenantAdmin, $tenant, 'tenant_admin');
+
+    $this->actingAs($tenantAdmin)
+        ->get('/admin/tenants/operations/print-jobs')
+        ->assertOk()
+        ->assertSee('Delete permanently');
 
     $this->get("/admin/tenants/operations/print-jobs/{$job->getKey()}")
         ->assertNotFound();

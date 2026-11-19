@@ -10,6 +10,7 @@ use App\Domain\Jobs\Models\PrintJobRetryRequest;
 use App\Domain\Jobs\Repositories\ManualJobRetryRepository;
 use App\Domain\Sources\Enums\SourceIdentityStatus;
 use App\Domain\Sources\Models\PrinterBinding;
+use App\Domain\Sources\Models\SourceConnection;
 use App\Domain\Sources\Services\SourceDocumentFetcher;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Services\TenantContext;
@@ -35,7 +36,7 @@ final class ManualJobRetryService
     ): PrintJob {
         $this->authorize($job, $actor);
         $this->assertReason($reason);
-        $job->loadMissing(['document', 'binding.sourceConnection', 'binding.printer', 'printer']);
+        $job->loadMissing(['document', 'sourceConnection', 'binding.sourceConnection', 'binding.printer', 'printer']);
         $this->assertRetryable($job, $destinationBindingId);
 
         if ($job->document === null || ! Storage::disk($job->document->disk)->exists($job->document->path)) {
@@ -59,7 +60,7 @@ final class ManualJobRetryService
     ): PrintJobRetryRequest {
         $this->authorize($job, $actor);
         $this->assertReason($reason);
-        $job->loadMissing(['binding.sourceConnection', 'binding.printer', 'printer']);
+        $job->loadMissing(['sourceConnection', 'binding.sourceConnection', 'binding.printer', 'printer']);
         $this->assertRetryable($job, $destinationBindingId);
 
         $request = $this->repository->scheduleRefetch(
@@ -128,7 +129,7 @@ final class ManualJobRetryService
     ): PrintJob {
         $this->authorize($job, $actor);
         $this->assertReason($reason);
-        $job->loadMissing(['document', 'binding.sourceConnection', 'binding.printer', 'printer']);
+        $job->loadMissing(['document', 'sourceConnection', 'binding.sourceConnection', 'binding.printer', 'printer']);
         $this->assertRetryable($job, $destinationBindingId);
 
         $link = (string) ($job->source_payload['Link'] ?? '');
@@ -138,7 +139,7 @@ final class ManualJobRetryService
         }
 
         try {
-            $document = $this->documentFetcher->fetch($job->binding->sourceConnection, $link);
+            $document = $this->documentFetcher->fetch($this->sourceConnection($job), $link);
         } catch (Throwable $exception) {
             throw new DomainException(
                 'The refreshed PDF could not be downloaded or validated: '.$exception->getMessage(),
@@ -206,8 +207,10 @@ final class ManualJobRetryService
             throw new DomainException('The print job still has an active Agent lease.');
         }
 
-        if ($job->binding === null) {
-            throw new DomainException('The original source binding is no longer available.');
+        $sourceConnectionId = $job->source_connection_id ?? $job->binding?->source_connection_id;
+
+        if ($sourceConnectionId === null) {
+            throw new DomainException('The original Opsifin connection is no longer available.');
         }
 
         $destination = PrinterBinding::query()
@@ -218,7 +221,7 @@ final class ManualJobRetryService
             throw new DomainException('The selected destination binding is not available for this tenant.');
         }
 
-        if ($destination->source_connection_id !== $job->binding->source_connection_id) {
+        if ($destination->source_connection_id !== $sourceConnectionId) {
             throw new DomainException('The destination binding must use the same Opsifin connection as the original job.');
         }
 
@@ -238,5 +241,16 @@ final class ManualJobRetryService
         if (! $destinationPrinter instanceof Printer || $destinationPrinter->is_active === false) {
             throw new DomainException('The printer on the selected destination binding must be active before retrying.');
         }
+    }
+
+    private function sourceConnection(PrintJob $job): SourceConnection
+    {
+        $connection = $job->sourceConnection ?? $job->binding?->sourceConnection;
+
+        if (! $connection instanceof SourceConnection) {
+            throw new DomainException('The original Opsifin connection is no longer available.');
+        }
+
+        return $connection;
     }
 }

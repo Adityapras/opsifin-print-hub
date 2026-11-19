@@ -17,9 +17,8 @@ final class JobIntakeRepository
     public function findDuplicate(PrinterBinding $binding, array $payload): ?PrintJob
     {
         return PrintJob::query()
-            ->where('inv_no', (string) $payload['InvNo'])
-            ->where('item_type', (string) $payload['ItemType'])
-            ->where('version_inv', (int) $payload['VersionInv'])
+            ->where('source_connection_id', $binding->source_connection_id)
+            ->where('dedupe_key', $this->dedupeKey($payload))
             ->first();
     }
 
@@ -107,6 +106,10 @@ final class JobIntakeRepository
     ): PrintJob {
         return PrintJob::query()->create($extra + [
             'binding_id' => $binding->getKey(),
+            // Source disalin ke job karena binding dapat dinonaktifkan atau diganti
+            // untuk retry, sedangkan callback wajib selalu kembali ke Opsifin asal.
+            'source_connection_id' => $binding->source_connection_id,
+            'dedupe_key' => $this->dedupeKey($payload),
             'printer_id' => $binding->printer_id,
             'inv_no' => (string) $payload['InvNo'],
             'item_type' => (string) $payload['ItemType'],
@@ -159,5 +162,15 @@ final class JobIntakeRepository
         }
 
         return null;
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function dedupeKey(array $payload): string
+    {
+        return hash('sha256', implode('|', [
+            (string) $payload['InvNo'],
+            (string) $payload['ItemType'],
+            (string) $payload['VersionInv'],
+        ]));
     }
 }

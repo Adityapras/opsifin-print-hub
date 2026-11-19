@@ -50,7 +50,7 @@ Targetnya: semua printer di semua tenant dikelola dari satu Hub, dan setiap invo
 **Tujuan**
 
 1. **Terpusat.** Tenant, lokasi, printer, routing, credential, dan jadwal diatur di Hub. Di PC lokasi tidak ada lagi konfigurasi selain pairing satu kali.
-2. **Multi-tenant.** Satu Hub melayani banyak instance opsifin-main (satu tenant = satu instance) dengan data yang terisolasi.
+2. **Multi-tenant.** Satu Hub melayani banyak perusahaan dengan data yang terisolasi. Satu tenant adalah satu batas kepemilikan dan akses bisnis; tenant yang sama boleh memiliki beberapa instance opsifin-main melalui Source Connection terpisah.
 3. **Banyak printer per agent.** Satu agent melayani semua printer yang terlihat dari PC tersebut.
 4. **Bisa dilacak end-to-end.** Setiap perubahan status job tercatat sebagai event beserta waktu, aktor, dan detailnya.
 5. **Andal dan jujur.** Status `Success` hanya dikirim setelah spooler Windows mengonfirmasi job selesai. Kegagalan berakhir sebagai `Failed` yang terlihat dan bisa dicetak ulang, bukan loop tanpa batas.
@@ -146,7 +146,7 @@ Rekomendasinya Laravel + MySQL untuk Hub dan .NET 10 (C#) untuk Agent. Hub memak
 
 ## Multi-tenant dan keamanan
 
-Satu database bersama dipakai, dan setiap tabel bisnis punya kolom `tenant_id` yang dijaga di dua lapis: aplikasi dan database. Satu tenant setara dengan satu instance opsifin-main. Alasannya, setiap instance opsifin-main punya DB dan `REST_USERNAME`/`REST_PASSWORD` sendiri lewat env.
+Satu database bersama dipakai, dan setiap tabel bisnis punya kolom `tenant_id` yang dijaga di dua lapis: aplikasi dan database. Satu tenant setara dengan satu batas kepemilikan dan akses bisnis. Tenant yang sama boleh memiliki beberapa instance opsifin-main, misalnya Production dan Cabang, tetapi setiap instance wajib memakai Source Connection, credential, binding, dan identity verification sendiri serta mengembalikan `integration_id` tenant yang sama.
 
 **Isolasi tenant**
 
@@ -206,7 +206,7 @@ Ada 39 kebutuhan. Yang berlabel P0 membentuk MVP dan harus selesai sebelum pilot
 | FR-20 | Printer | Test page dari Hub | P1 |
 | FR-21 | Printer | Printer cadangan otomatis bila printer utama error lebih dari N menit | P2 |
 | FR-22 | Printer | Pengaturan cetak per printer: tray, duplex, jumlah salinan, ukuran kertas | P1 |
-| FR-23 | Print job | Pull job dari opsifin-main per binding, dedupe per (tenant, InvNo, ItemType, versi) | P0 (MVP) |
+| FR-23 | Print job | Pull job dari opsifin-main per binding, dedupe per (tenant, source connection, InvNo, ItemType, versi) | P0 (MVP) |
 | FR-24 | Print job | Validasi PDF di Hub (bisa dibuka, jumlah halaman, ukuran), simpan snapshot + SHA-256 | P0 (MVP) |
 | FR-25 | Print job | `IsHardCopyInv = N`: job ditutup sebagai `skipped` dan callback Success dikirim (perilaku lama), tetapi tercatat | P0 (MVP) |
 | FR-26 | Print job | Agent mengklaim job dengan lease 120 detik; satu job hanya dipegang satu agent | P0 (MVP) |
@@ -227,6 +227,8 @@ Ada 39 kebutuhan. Yang berlabel P0 membentuk MVP dan harus selesai sebelum pilot
 ## Lifecycle print job (hulu ke hilir)
 
 Setiap dokumen menjadi satu baris `print_jobs` yang bergerak di state machine. Setiap transisi menulis satu event ke `print_job_events` (siapa, kapan, data teknis). Timeline di layar Detail Job dibentuk dari event-event tersebut.
+
+Hard delete per job hanya tersedia untuk Tenant Admin pada state terminal (`printed`, `skipped`, `failed`, atau `cancelled`) tanpa lease Agent, callback pending, atau refetch aktif. Nomor dokumen dan alasan wajib dikonfirmasi. Job, attempt, event, callback, retry request, serta seluruh snapshot PDF job dihapus; satu Audit Log ringkas tetap dipertahankan. Menghapus dedupe job berarti dokumen dapat ditarik ulang bila masih diekspos oleh Opsifin.
 
 &#91;embedded content: state machine print job · 7 state + callback\]
 
@@ -326,7 +328,7 @@ Fase 1 tidak mengubah apa pun di opsifin-main. Hub berperan sebagai "agent lama"
 - `ItemType` `PO/TO` disingkat jadi `PO` untuk nama file, tetapi dikirim apa adanya di callback.
 - Field status: `PrintProcessV2` diisi bila `PrinterVersion = 1` dan `VersionInv = 2`; selain itu `PrintProcess`.
 - `IsHardCopyInv = N`: tidak dicetak, langsung callback `Success` tanpa `PrinterName` (FR-25).
-- `getData` menandai `Process` saat item diambil, dan item `Process` ikut terambil lagi di panggilan berikutnya. Karena itu Hub wajib melakukan dedupe dengan kunci `(tenant, InvNo, ItemType, VersionInv)` agar satu invoice tidak dicetak dua kali.
+- `getData` menandai `Process` saat item diambil, dan item `Process` ikut terambil lagi di panggilan berikutnya. Karena itu Hub wajib melakukan dedupe dengan kunci `(tenant, source connection, InvNo, ItemType, VersionInv)` agar satu invoice tidak dicetak dua kali tanpa menganggap invoice bernomor sama dari instance lain sebagai duplikat.
 - **Baru:** kegagalan permanen dikirim sebagai `Failed`. Endpoint lama sudah menerimanya (`print_status = N`, `print_note = 'Failed to print'`), tetapi agent lama tidak pernah mengirimnya.
 
 **Fase 3: API antrean v3 (perubahan di opsifin-main, opsional tetapi direkomendasikan)**
@@ -347,9 +349,9 @@ Inti skemanya adalah tiga tabel: `print_jobs` (keadaan sekarang), `print_job_att
 
 | Tabel | Isi | Kolom penting |
 | --- | --- | --- |
-| `tenants` | Satu baris per instance opsifin-main | `code`, `name`, `timezone`, `quiet_hours`, `retention_days`, `status` |
+| `tenants` | Satu baris per batas perusahaan dan akses bisnis | `code`, `name`, `timezone`, `quiet_hours`, `retention_days`, `status` |
 | `users`, `memberships` | User dan role per tenant/site | `role` (tenant\_admin, operator, viewer), `site_ids[]`, `totp_secret` |
-| `source_connections` | Koneksi ke opsifin-main | `base_url`, `username`, `password_enc`, `api_version` (2 / 3), `pull_interval_s`, `last_ok_at`, `last_error` |
+| `source_connections` | Koneksi ke satu instance opsifin-main; satu tenant boleh memiliki beberapa connection | `base_url`, `username`, `password_enc`, `api_version` (2 / 3), `pull_interval_s`, `last_ok_at`, `last_error` |
 | `sites` | Cabang/lokasi fisik | `name`, `address`, `pic`, `timezone` |
 | `agents` | Satu baris per PC terpasang | `site_id`, `hostname`, `version`, `secret_hash`, `last_seen_at`, `status`, `revoked_at` |
 | `printers` | Printer Windows yang dilaporkan agent | `agent_id`, `windows_name`, `alias`, `status`, `status_detail`, `is_active`, `is_paused`, `print_settings json` |
@@ -368,8 +370,9 @@ CREATE TABLE print_jobs (
   id              CHAR(36) PRIMARY KEY,        -- UUIDv7
   tenant_id       CHAR(36) NOT NULL,
   binding_id      CHAR(36) NOT NULL,
+  source_connection_id CHAR(36) NOT NULL,      -- snapshot route Opsifin asal
   printer_id      CHAR(36) NOT NULL,
-  dedupe_key      VARCHAR(191) NOT NULL,       -- InvNo|ItemType|VersionInv
+  dedupe_key      CHAR(64) NOT NULL,           -- SHA-256 InvNo|ItemType|VersionInv
   inv_no          VARCHAR(64) NOT NULL,
   item_type       VARCHAR(32) NOT NULL,        -- TICKET, PO/TO, INV, BILL, ...
   version_inv     SMALLINT,
@@ -385,10 +388,11 @@ CREATE TABLE print_jobs (
   received_at     DATETIME(6) NOT NULL,
   printed_at      DATETIME(6),
   reported_at     DATETIME(6),
-  UNIQUE KEY uq_dedupe (tenant_id, dedupe_key),
+  UNIQUE KEY uq_dedupe (tenant_id, source_connection_id, dedupe_key),
   KEY ix_claim (printer_id, state, received_at),   -- dipakai query klaim
   FOREIGN KEY (tenant_id)   REFERENCES tenants (id),
   FOREIGN KEY (binding_id)  REFERENCES printer_bindings (id),
+  FOREIGN KEY (source_connection_id) REFERENCES source_connections (id),
   FOREIGN KEY (printer_id)  REFERENCES printers (id),
   FOREIGN KEY (document_id) REFERENCES documents (id)
 );
@@ -468,7 +472,7 @@ Hub dibuka di layar **Dashboard** yang menjawab satu pertanyaan: "apakah ada yan
 | Menu | Isi | Aksi utama | Peran |
 | --- | --- | --- | --- |
 | Dashboard | Kartu: printer bermasalah, agent offline, job gagal 24 jam, job tertua di antrean. Grafik volume hari ini per jam | Klik kartu untuk membuka daftar yang sudah terfilter | Semua |
-| Print Jobs | Tabel job dengan filter: state, printer, site, item type, rentang tanggal, InvNo | Cetak ulang, batalkan, ekspor CSV | Operator+ |
+| Print Jobs | Tabel job dengan filter: state, source connection, printer, site, item type, rentang tanggal, InvNo | Cetak ulang, batalkan, ekspor CSV; hard delete terminal job hanya Tenant Admin | Operator+ |
 | Detail Job | Header (InvNo, customer, state) + timeline event + tab Attempts, Dokumen (pratinjau PDF + SHA-256), Callback (request/response) | Cetak ulang ke printer yang sama/lain, unduh PDF | Operator+ |
 | Printers | Kartu per printer: status, antrean, terakhir cetak, binding | Aktifkan, pause/resume, test page, atur binding & pengaturan cetak | Tenant Admin (Operator: pause/resume) |
 | Agents | Tabel agent: site, hostname, versi, last seen, printer terdeteksi | Pairing code baru, revoke, minta log, jadwalkan update | Tenant Admin |

@@ -26,7 +26,7 @@ final class ManualJobRetryRepository
     ): PrintJobRetryRequest {
         return DB::transaction(function () use ($job, $actor, $reason, $destinationBindingId): PrintJobRetryRequest {
             $locked = PrintJob::query()
-                ->with(['binding.sourceConnection', 'binding.printer', 'printer'])
+                ->with(['sourceConnection', 'binding.sourceConnection', 'binding.printer', 'printer'])
                 ->whereKey($job->getKey())
                 ->lockForUpdate()
                 ->firstOrFail();
@@ -155,7 +155,7 @@ final class ManualJobRetryRepository
     ): PrintJob {
         return DB::transaction(function () use ($job, $actor, $reason, $mode, $destinationBindingId, $refetchedDocument, $retryRequest): PrintJob {
             $locked = PrintJob::query()
-                ->with(['document', 'binding.sourceConnection', 'binding.printer', 'printer'])
+                ->with(['document', 'sourceConnection', 'binding.sourceConnection', 'binding.printer', 'printer'])
                 ->whereKey($job->getKey())
                 ->lockForUpdate()
                 ->firstOrFail();
@@ -275,8 +275,10 @@ final class ManualJobRetryRepository
             throw new DomainException('The print job still has an active Agent lease.');
         }
 
-        if ($job->binding === null) {
-            throw new DomainException('The original source binding is no longer available.');
+        $sourceConnectionId = $job->source_connection_id ?? $job->binding?->source_connection_id;
+
+        if ($sourceConnectionId === null) {
+            throw new DomainException('The original Opsifin connection is no longer available.');
         }
 
         $destination = PrinterBinding::query()
@@ -289,7 +291,7 @@ final class ManualJobRetryRepository
             throw new DomainException('The selected destination binding is not available for this tenant.');
         }
 
-        if ($destination->source_connection_id !== $job->binding->source_connection_id) {
+        if ($destination->source_connection_id !== $sourceConnectionId) {
             throw new DomainException('The destination binding must use the same Opsifin connection as the original job.');
         }
 

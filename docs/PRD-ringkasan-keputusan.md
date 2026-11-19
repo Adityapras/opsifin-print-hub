@@ -61,7 +61,7 @@ Multi-tenant di sini berarti **satu Hub melayani banyak perusahaan klien sekalig
 
 | Istilah | Artinya | Contoh |
 | --- | --- | --- |
-| Tenant | Satu perusahaan klien Opsifin = satu instance opsifin-main | PT Klien A |
+| Tenant | Satu batas perusahaan dan akses bisnis; boleh memiliki beberapa instance opsifin-main dengan Integration ID yang sama | PT Klien A |
 | Site | Lokasi fisik milik tenant | Kantor Jakarta, cabang Surabaya |
 | Agent | Satu instalasi service di satu PC; melayani semua printer yang terlihat dari PC itu | PC-FIN-01 |
 | Printer | Printer Windows yang dilaporkan agent dan diaktifkan admin | Printer kop lantai 2 |
@@ -104,7 +104,7 @@ Nomor langkah di bawah sama dengan nomor di diagram alur.
 
 1. **Pull** — setiap 30 detik per binding, Hub memanggil `POST /getData` dengan payload yang sama dengan app lama.
 2. **getData** — opsifin-main mengembalikan maksimal 50 invoice dan menandainya `Process`.
-3. **Simpan job** — Hub menyimpan satu job per invoice dengan kunci unik (tenant, InvNo, ItemType, versi), sehingga data ganda diabaikan. Bila `IsHardCopyInv = N`, job langsung `skipped` dan masuk langkah 10.
+3. **Simpan job** — Hub menyimpan satu job per invoice dengan kunci unik (tenant, source connection, InvNo, ItemType, versi), sehingga data ganda dari source yang sama diabaikan tanpa mencampur nomor invoice yang kebetulan sama dari instance lain. Bila `IsHardCopyInv = N`, job langsung `skipped` dan masuk langkah 10.
 4. **Render PDF** — Hub mengunduh `Link`; opsifin-main merender PDF seperti sekarang.
 5. **Validasi** — Hub memastikan PDF bisa dibuka, menghitung SHA-256 dan jumlah halaman, menyimpan snapshot, lalu mengubah job menjadi `queued`.
 6. **Klaim** — agent bertanya ke Hub setiap 5 detik. Hub memberi job tertua per printer dengan lease 120 detik, satu job per printer sekaligus agar urutan terjaga.

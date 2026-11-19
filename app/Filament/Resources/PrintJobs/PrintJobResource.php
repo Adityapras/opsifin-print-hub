@@ -5,6 +5,7 @@ namespace App\Filament\Resources\PrintJobs;
 use App\Domain\Jobs\Enums\PrintJobState;
 use App\Domain\Jobs\Models\PrintJob;
 use App\Domain\Jobs\Services\ManualJobRetryService;
+use App\Domain\Jobs\Services\PrintJobDeletionService;
 use App\Domain\Sources\Models\PrinterBinding;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Services\TenantContext;
@@ -20,6 +21,7 @@ use Filament\Actions\ViewAction;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\TextInput;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
@@ -67,7 +69,10 @@ final class PrintJobResource extends Resource
                         ->formatStateUsing(fn (PrintJobState $state): string => self::stateLabel($state))
                         ->badge()
                         ->color(fn (PrintJobState $state): string => self::stateColor($state)),
-                    TextEntry::make('item_type')->label('Type')->badge()->color('gray'),
+                    TextEntry::make('sourceConnection.name')
+                        ->label('Source connection')
+                        ->placeholder('Source connection was not recorded'),
+                    TextEntry::make('item_type')->label('Document type')->badge()->color('gray'),
                     TextEntry::make('version_inv')->label('Invoice version'),
                     TextEntry::make('customer_name')->label('Customer')->placeholder('—'),
                     TextEntry::make('customer_id')->label('Customer ID')->placeholder('—'),
@@ -165,14 +170,28 @@ final class PrintJobResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
-            ->modifyQueryUsing(fn (Builder $query): Builder => $query->with('latestRetryRequest'))
+            ->modifyQueryUsing(fn (Builder $query): Builder => $query->with([
+                'latestRetryRequest',
+                'sourceConnection',
+            ]))
             ->columns([
                 TextColumn::make('inv_no')
                     ->label('Document number')
-                    ->description(fn (PrintJob $record): string => $record->item_type.' · v'.$record->version_inv)
+                    ->description(fn (PrintJob $record): string => 'Version '.$record->version_inv)
                     ->searchable()
                     ->weight('semibold')
                     ->copyable(),
+                TextColumn::make('sourceConnection.name')
+                    ->label('Source connection')
+                    ->description(fn (PrintJob $record): ?string => $record->sourceConnection?->base_url)
+                    ->searchable()
+                    ->placeholder('—'),
+                TextColumn::make('item_type')
+                    ->label('Document type')
+                    ->badge()
+                    ->color('gray')
+                    ->searchable()
+                    ->sortable(),
                 TextColumn::make('customer_name')
                     ->label('Customer')
                     ->description(fn (PrintJob $record): ?string => $record->customer_id)
@@ -218,13 +237,22 @@ final class PrintJobResource extends Resource
                     ->relationship('printer', 'windows_name')
                     ->searchable()
                     ->preload(),
+                SelectFilter::make('source_connection_id')
+                    ->label('Source connection')
+                    ->relationship('sourceConnection', 'name')
+                    ->searchable()
+                    ->preload(),
                 SelectFilter::make('item_type')
                     ->label('Document type')
-                    ->options([
-                        'INV' => 'Invoice',
-                        'PO' => 'Purchase Order',
-                        'TO' => 'Transfer Order',
-                    ]),
+                    ->options(fn (): array => PrintJob::query()
+                        ->select('item_type')
+                        ->whereNotNull('item_type')
+                        ->distinct()
+                        ->orderBy('item_type')
+                        ->pluck('item_type', 'item_type')
+                        ->all())
+                    ->searchable()
+                    ->preload(),
             ])
             ->defaultSort('received_at', 'desc')
             ->poll('5s')
@@ -237,6 +265,7 @@ final class PrintJobResource extends Resource
                         ->modalHeading(fn (PrintJob $record): string => "Print activity · {$record->inv_no}")
                         ->modalDescription('Review the complete print trail without leaving the job list.')
                         ->modalWidth(Width::SevenExtraLarge),
+                    self::deleteAction(),
                 ])
                     ->label('Actions')
                     ->icon(Heroicon::OutlinedEllipsisVertical)
@@ -273,6 +302,86 @@ final class PrintJobResource extends Resource
             ->modalHeading('Download a fresh PDF and retry?')
             ->modalDescription('Use this after the PDF was corrected in Opsifin. A background worker downloads and validates it while the previous evidence remains available.')
             ->modalSubmitActionLabel('Queue refetch');
+    }
+
+    public static function deleteAction(): Action
+    {
+        return Action::make('deletePermanently')
+            ->label('Delete permanently')
+            ->icon(Heroicon::OutlinedTrash)
+            ->color('danger')
+            ->visible(fn (): bool => self::canDeleteJobs())
+            ->disabled(fn (PrintJob $record): bool => app(PrintJobDeletionService::class)->blocker($record) !== null)
+            ->tooltip(fn (PrintJob $record): ?string => app(PrintJobDeletionService::class)->blocker($record))
+            ->requiresConfirmation()
+            ->modalHeading(fn (PrintJob $record): string => "Delete {$record->inv_no} permanently?")
+            ->modalDescription('This permanently removes the job, attempts, activity timeline, callback and retry history, and all stored PDF snapshots for this job. The deletion audit remains. If Opsifin still exposes the document, the Hub can pull it again.')
+            ->modalSubmitActionLabel('Delete permanently')
+            ->schema([
+                TextInput::make('confirmation')
+                    ->label(fn (PrintJob $record): string => "Type {$record->inv_no} to confirm")
+                    ->required(),
+                Textarea::make('reason')
+                    ->label('Reason')
+                    ->helperText('Recorded in the Audit Log. Minimum 10 characters.')
+                    ->minLength(10)
+                    ->maxLength(500)
+                    ->required()
+                    ->rows(3),
+            ])
+            ->action(function (PrintJob $record, array $data, PrintJobDeletionService $deletion): void {
+                if ($data['confirmation'] !== $record->inv_no) {
+                    Notification::make()
+                        ->title('Confirmation does not match')
+                        ->body("Type {$record->inv_no} exactly. No data was changed.")
+                        ->danger()
+                        ->send();
+
+                    return;
+                }
+
+                $actor = Filament::auth()->user();
+
+                if (! $actor instanceof User) {
+                    abort(403);
+                }
+
+                try {
+                    $result = $deletion->delete($record, $actor, (string) $data['reason']);
+                    $deleted = array_sum($result['deleted_counts']);
+                    $notification = Notification::make()
+                        ->title('Print job deleted')
+                        ->body("{$deleted} job records and stored documents were removed permanently.");
+
+                    if ($result['file_cleanup_failures'] > 0) {
+                        $notification
+                            ->title('Print job deleted with storage warning')
+                            ->body("The database history was removed, but {$result['file_cleanup_failures']} stored PDF file(s) could not be cleaned up. Check storage permissions.")
+                            ->warning()
+                            ->persistent();
+                    } else {
+                        $notification->success();
+                    }
+
+                    $notification->send();
+                } catch (DomainException $exception) {
+                    Notification::make()
+                        ->title('Print job could not be deleted')
+                        ->body($exception->getMessage())
+                        ->danger()
+                        ->persistent()
+                        ->send();
+                } catch (Throwable $exception) {
+                    report($exception);
+
+                    Notification::make()
+                        ->title('Print job could not be deleted')
+                        ->body('An unexpected error occurred. No active job operation was interrupted.')
+                        ->danger()
+                        ->persistent()
+                        ->send();
+                }
+            });
     }
 
     private static function retryAction(string $mode): Action
@@ -361,6 +470,16 @@ final class PrintJobResource extends Resource
             && $user->hasTenantRole($tenant, ['tenant_admin', 'operator']);
     }
 
+    private static function canDeleteJobs(): bool
+    {
+        $user = Filament::auth()->user();
+        $tenant = app(TenantContext::class)->tenant();
+
+        return $user instanceof User
+            && $tenant instanceof Tenant
+            && $user->hasTenantRole($tenant, ['tenant_admin']);
+    }
+
     private static function documentDownloadUrl(PrintJob $job): ?string
     {
         $tenant = app(TenantContext::class)->tenant();
@@ -404,7 +523,7 @@ final class PrintJobResource extends Resource
     /** @return array<string, string> */
     private static function destinationBindingOptions(PrintJob $job): array
     {
-        $sourceConnectionId = $job->binding?->source_connection_id;
+        $sourceConnectionId = $job->source_connection_id ?? $job->binding?->source_connection_id;
 
         if ($sourceConnectionId === null) {
             return [];

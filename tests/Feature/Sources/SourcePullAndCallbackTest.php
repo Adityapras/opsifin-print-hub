@@ -128,6 +128,8 @@ it('menarik job, memvalidasi PDF, menyimpan snapshot, dan mengantrekannya', func
 
     expect($job->state)->toBe(PrintJobState::Queued)
         ->and($job->binding_id)->toBe($fixture['binding']->getKey())
+        ->and($job->source_connection_id)->toBe($fixture['connection']->getKey())
+        ->and($job->dedupe_key)->toHaveLength(64)
         ->and($job->source_payload['CustomerName'])->toBe('Toko Uji')
         ->and($document->sha256)->toBe(hash('sha256', $pdf))
         ->and($document->pages)->toBe(1)
@@ -202,6 +204,55 @@ it('mengabaikan payload duplikat tanpa mengunduh ulang PDF', function () {
         ->and(PrintJobEvent::query()->where('type', 'duplicate_ignored')->count())->toBe(1);
 
     Http::assertSentCount(3);
+});
+
+it('menerima nomor invoice yang sama dari dua source connection dalam tenant yang sama', function () {
+    Storage::fake('local');
+    $fixture = sourceFixture('multi-source');
+    $branchConnection = SourceConnection::query()->create([
+        'name' => 'Legacy multi-source branch',
+        'base_url' => 'https://legacy-multi-source-branch.test/api/print',
+        'username' => 'api-user',
+        'password_enc' => 'super-secret',
+        'active_from' => '00:00:00',
+        'active_until' => '23:59:59',
+    ]);
+    $branchConnection->forceFill([
+        'identity_status' => SourceIdentityStatus::Verified,
+        'remote_integration_id' => $fixture['tenant']->integration_id,
+        'identity_verified_at' => now(),
+        'is_active' => true,
+    ])->saveQuietly();
+    $branchBinding = PrinterBinding::query()->create([
+        'source_connection_id' => $branchConnection->getKey(),
+        'printer_id' => $fixture['printer']->getKey(),
+        'source_printer_name' => 'Kasir Cabang',
+        'source_identifier' => 'CAB-02',
+        'printer_version' => 1,
+        'is_active' => true,
+    ]);
+
+    Http::fake([
+        'https://legacy-multi-source.test/api/print/getData' => Http::response([sourcePayload()]),
+        'https://legacy-multi-source-branch.test/api/print/getData' => Http::response([
+            sourcePayload(['Link' => 'https://documents.test/branch-invoice.pdf']),
+        ]),
+        'https://documents.test/invoice.pdf' => Http::response(validPdf()),
+        'https://documents.test/branch-invoice.pdf' => Http::response(validPdf()),
+    ]);
+
+    $service = app(SourcePullService::class);
+    $productionResult = $service->pull($fixture['binding']);
+    $branchResult = $service->pull($branchBinding);
+
+    expect($productionResult['queued'])->toBe(1)
+        ->and($branchResult['queued'])->toBe(1)
+        ->and($branchResult['duplicates'])->toBe(0)
+        ->and(PrintJob::query()->count())->toBe(2)
+        ->and(PrintJob::query()->pluck('source_connection_id')->sort()->values()->all())->toBe(
+            collect([$fixture['connection']->getKey(), $branchConnection->getKey()])->sort()->values()->all(),
+        )
+        ->and(PrintJob::query()->pluck('dedupe_key')->unique()->count())->toBe(1);
 });
 
 it('menandai non-hardcopy sebagai skipped dan menyiapkan callback kompatibel v2', function () {
@@ -283,7 +334,51 @@ it('membuat callback sukses ketika agent menyelesaikan job cetak', function () {
     $outbox = CallbackOutbox::query()->sole();
 
     expect($outbox->payload['PrintProcessV2'])->toBe('Success')
-        ->and($outbox->payload['PrinterName'])->toBe('Kasir 01');
+        ->and($outbox->payload['PrinterName'])->toBe('Kasir 01')
+        ->and($outbox->source_connection_id)->toBe($fixture['connection']->getKey())
+        ->and($outbox->endpoint)->toBe($fixture['connection']->base_url);
+});
+
+it('mempertahankan callback ke source asal yang tersimpan pada job', function () {
+    Storage::fake('local');
+    $fixture = sourceFixture('callback-source-snapshot');
+
+    Http::fake([
+        'https://legacy-callback-source-snapshot.test/api/print/getData' => Http::response([
+            sourcePayload(['IsHardCopyInv' => 'N']),
+        ]),
+    ]);
+
+    app(SourcePullService::class)->pull($fixture['binding']);
+    $job = PrintJob::query()->sole();
+    $originalConnectionId = $job->source_connection_id;
+    $job->outboxes()->delete();
+
+    $otherConnection = SourceConnection::query()->create([
+        'name' => 'Unexpected replacement source',
+        'base_url' => 'https://unexpected-source.test/api/print',
+        'username' => 'api-user',
+        'password_enc' => 'super-secret',
+    ]);
+    $otherConnection->forceFill([
+        'identity_status' => SourceIdentityStatus::Verified,
+        'remote_integration_id' => $fixture['tenant']->integration_id,
+        'identity_verified_at' => now(),
+        'is_active' => true,
+    ])->saveQuietly();
+
+    // Simulasi perubahan data di luar domain service membuktikan callback tetap
+    // fail-safe memakai source snapshot job, bukan binding yang mutable.
+    DB::table('printer_bindings')->where('id', $fixture['binding']->getKey())->update([
+        'source_connection_id' => $otherConnection->getKey(),
+    ]);
+
+    app(CallbackOutboxService::class)->enqueueForTerminal($job->fresh());
+    $outbox = CallbackOutbox::query()->sole();
+
+    expect($outbox->source_connection_id)->toBe($originalConnectionId)
+        ->and($outbox->endpoint)->toBe($fixture['connection']->base_url)
+        ->and($outbox->source_connection_id)->not->toBe($otherConnection->getKey());
 });
 
 it('mengirim callback outbox lalu menandai job telah dilaporkan', function () {

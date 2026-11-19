@@ -7,6 +7,7 @@ use App\Domain\Tenancy\Concerns\BelongsToTenant;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use LogicException;
 
 /**
  * @property string $source_connection_id
@@ -46,6 +47,17 @@ class PrinterBinding extends Model
         'last_status_synced_at',
         'last_status_sync_error',
     ];
+
+    protected static function booted(): void
+    {
+        static::updating(function (PrinterBinding $binding): void {
+            if ($binding->isDirty('source_connection_id')) {
+                // Source adalah batas idempotensi dan tujuan callback. Mengubahnya
+                // pada binding lama dapat mengirim hasil invoice ke Opsifin yang salah.
+                throw new LogicException('A printer binding cannot be moved to another Opsifin connection.');
+            }
+        });
+    }
 
     protected function casts(): array
     {
